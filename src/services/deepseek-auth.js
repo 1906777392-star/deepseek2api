@@ -43,12 +43,16 @@ export async function loginToDeepseek({ loginValue, password, deviceId }) {
   });
 
   let result;
+  let responseText = "";
   try {
-    result = await response.json();
+    responseText = await response.text();
+    result = JSON.parse(responseText);
   } catch {
+    const preview = responseText ? responseText.slice(0, 500) : "(empty body)";
     throw new Error(
       `DeepSeek login failed (HTTP ${response.status}): unable to parse response. ` +
-      `This may indicate network connectivity issues to chat.deepseek.com`
+      `This may indicate network connectivity issues to chat.deepseek.com\n` +
+      `Response body preview: ${preview}`
     );
   }
 

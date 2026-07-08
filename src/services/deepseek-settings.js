@@ -39,12 +39,16 @@ async function fetchScopeSettings(account, scope) {
   });
 
   let payload;
+  let responseText = "";
   try {
-    payload = await response.json();
+    responseText = await response.text();
+    payload = JSON.parse(responseText);
   } catch {
+    const preview = responseText ? responseText.slice(0, 500) : "(empty body)";
     throw new Error(
       `Settings ${scope} request failed (HTTP ${response.status}): unable to parse response. ` +
-      `This may indicate network connectivity issues to chat.deepseek.com`
+      `This may indicate network connectivity issues to chat.deepseek.com\n` +
+      `Response body preview: ${preview}`
     );
   }
 
