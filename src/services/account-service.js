@@ -14,7 +14,12 @@ export function listAccounts() {
 }
 
 export function isUsableAccount(account) {
-  return Boolean(account?.id && account?.token);
+  return Boolean(
+    account?.id
+    && account?.token
+    && account?.status !== "captcha_required"
+    && !account?.captchaState?.triggered
+  );
 }
 
 export function listUsableAccounts() {
@@ -71,6 +76,24 @@ export function saveAccount(accountInput) {
   }));
 
   return account;
+}
+
+export function updateAccountById(accountId, patch) {
+  let nextAccount = null;
+
+  updateStore((state) => ({
+    ...state,
+    accounts: state.accounts.map((account) => {
+      if (account.id !== accountId) {
+        return account;
+      }
+
+      nextAccount = withUpdatedRecord(account, patch);
+      return nextAccount;
+    })
+  }));
+
+  return nextAccount;
 }
 
 export function deleteAccountById(accountId) {

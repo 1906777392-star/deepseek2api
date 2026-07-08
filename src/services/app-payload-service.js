@@ -4,6 +4,7 @@ import { getSessionIncognitoState, getVisibleAccounts } from "./auth-service.js"
 import { listPublicInvites } from "./invite-service.js";
 import { getRegistrationSettings } from "./registration-service.js";
 import { buildSharedAccountModePayload } from "./shared-account-mode-service.js";
+import { getPublicSystemSettings } from "./system-settings-service.js";
 import { listPublicUsers } from "./user-service.js";
 
 export function toPublicAccount(account) {
@@ -14,6 +15,10 @@ export function toPublicAccount(account) {
     displayName: account.displayName,
     emailMasked: account.emailMasked,
     mobileMasked: account.mobileMasked,
+    status: account.status ?? (account.token ? "online" : "offline"),
+    settingsReported: Boolean(account.settingsReported),
+    lastSettingsReport: account.lastSettingsReport ?? null,
+    captchaState: account.captchaState ?? null,
     updatedAt: account.updatedAt
   };
 }
@@ -35,6 +40,7 @@ export function buildAdminData() {
   return {
     invites: listPublicInvites(),
     registration: getRegistrationSettings(),
+    systemSettings: getPublicSystemSettings(),
     users: listPublicUsers()
   };
 }
@@ -49,6 +55,7 @@ export function buildSessionPayload(session) {
     apiKeys: listApiKeysForOwner(session.ownerId),
     adminEnabled: config.admin.enabled,
     registration: getRegistrationSettings(),
+    systemSettings: getPublicSystemSettings(),
     incognito: toIncognitoPayload(session),
     sharedAccountMode: buildSharedAccountModePayload(session)
   };
@@ -67,6 +74,7 @@ export function buildAnonymousPayload() {
   return {
     authenticated: false,
     adminEnabled: config.admin.enabled,
-    registration: getRegistrationSettings()
+    registration: getRegistrationSettings(),
+    systemSettings: getPublicSystemSettings()
   };
 }

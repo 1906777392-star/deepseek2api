@@ -9,7 +9,10 @@ import {
   getActiveTab,
   renderAccountOptions,
   renderApiKeyList,
+  renderDashboardHome,
   renderDraftFileList,
+  renderRequestLogList,
+  renderSystemSettingsForm,
   resolveTabLabel,
   setPageTitle,
   setSelectOptions,
@@ -103,6 +106,7 @@ export function setStatus(element, value) {
 export function createView(options) {
   const {
     els,
+    getSelectedModel,
     getState,
     onDeleteAccount,
     onDeleteDraftFile,
@@ -128,6 +132,9 @@ export function createView(options) {
       incognito ? getIncognitoSummary(incognito, state.session.role) : ""
     );
     setText(els["shared-mode-summary"], getSharedModeSummary(state.session?.sharedAccountMode));
+    if (els["new-session"]) {
+      els["new-session"].classList.toggle("hidden", getActiveTab() !== "chat");
+    }
   }
 
   function renderSessions() {
@@ -164,12 +171,16 @@ export function createView(options) {
 
   function renderComposer() {
     const state = currentState();
+    const selectedModel = getSelectedModel();
+    const supportsUploads = selectedModel?.supportsUploads !== false;
     renderDraftFileList({
       container: els["draft-files"],
       files: state.draftFiles,
       onDelete: onDeleteDraftFile
     });
-    els["attach-files"].disabled = state.isSending;
+    els["attach-files"].classList.toggle("hidden", !supportsUploads);
+    els["attach-files"].disabled = state.isSending || !supportsUploads;
+    els["file-input"].disabled = state.isSending || !supportsUploads;
     els["send-button"].disabled = state.isSending;
   }
 
@@ -236,6 +247,49 @@ export function createView(options) {
     });
   }
 
+  function renderRequestLogs() {
+    renderRequestLogList({
+      container: els["request-log-list"],
+      logs: currentState().requestLogs
+    });
+  }
+
+  function renderDashboard() {
+    renderDashboardHome({
+      containers: {
+        captchaAlerts: els["captcha-alert-list"],
+        healthCards: els["dashboard-health-cards"],
+        recentLogs: els["dashboard-recent-logs"],
+        requestChart: els["dashboard-request-chart"]
+      },
+      state: currentState()
+    });
+  }
+
+  function renderSystemSettings() {
+    const state = currentState();
+    setText(els["settings-origin"], window.location.origin);
+    setText(
+      els["settings-registration-summary"],
+      state.registration?.inviteRequired ? "需要邀请码" : "开放注册"
+    );
+    renderSystemSettingsForm({
+      accounts: state.accounts,
+      elements: {
+        autoSolve: els["settings-auto-solve"],
+        clearKey: els["settings-clear-yescaptcha-key"],
+        cooldownMs: els["settings-cooldown-ms"],
+        endpoint: els["settings-endpoint"],
+        maxRetries: els["settings-max-retries"],
+        visionAccount: els["settings-vision-account"],
+        visionFallback: els["settings-vision-fallback"],
+        yescaptchaKey: els["settings-yescaptcha-key"]
+      },
+      isAdmin: state.session?.role === "admin",
+      settings: state.systemSettings
+    });
+  }
+
   function renderShell() {
     const state = currentState();
     if (!state.session) {
@@ -259,6 +313,9 @@ export function createView(options) {
       onDelete: onDeleteKey,
       onToggleToolCalls: onToggleKeyToolCalls
     });
+    renderRequestLogs();
+    renderDashboard();
+    renderSystemSettings();
     setSelectOptions({ select: els["explorer-path"], values: state.discoveredPaths });
     renderMetrics();
   }
@@ -268,9 +325,11 @@ export function createView(options) {
       applyRegistrationState(els, registration);
     },
     renderComposer,
+    renderDashboard,
     renderHeader,
     renderLatestMessage,
     renderMetrics,
+    renderRequestLogs,
     renderMessages,
     replaceLatestMessage,
     renderSessions,

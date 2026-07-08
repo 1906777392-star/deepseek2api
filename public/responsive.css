@@ -123,6 +123,9 @@
 
   .login-header,
   .settings-grid,
+  .settings-panel-grid,
+  .dashboard-card-grid,
+  .dashboard-overview-grid,
   .explorer-grid,
   .form-grid,
   .admin-grid {
@@ -131,6 +134,7 @@
 
   .login-header,
   .settings-form,
+  .captcha-form,
   .chat-toolbar,
   .toggle-row,
   .composer-meta,
@@ -147,6 +151,10 @@
     max-width: none;
     min-width: 0;
     width: 100%;
+  }
+
+  .captcha-form {
+    grid-template-columns: 1fr;
   }
 
   .theme-option {

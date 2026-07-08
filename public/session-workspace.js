@@ -42,7 +42,7 @@ export function createSessionWorkspace(options) {
   }
 
   async function fetchSessionsPage(accountId, updatedAtCursor) {
-    const payload = await proxyJson("/api/v0/chat_session/fetch_page", {
+    const payload = await proxyJson("/chat_session/fetch_page", {
       accountId,
       query: {
         "lte_cursor.pinned": false,
@@ -118,7 +118,7 @@ export function createSessionWorkspace(options) {
 
   async function loadHistory(sessionId) {
     const state = getState();
-    const payload = await proxyJson("/api/v0/chat/history_messages", {
+    const payload = await proxyJson("/chat/history_messages", {
       accountId: state.selectedAccountId,
       query: { chat_session_id: sessionId }
     });
@@ -136,7 +136,7 @@ export function createSessionWorkspace(options) {
       throw new Error(accountRequiredMessage);
     }
 
-    const payload = await proxyJson("/api/v0/chat_session/create", {
+    const payload = await proxyJson("/chat_session/create", {
       accountId: state.selectedAccountId,
       method: "POST",
       body: {}

@@ -95,6 +95,21 @@ export function createAppServices(options) {
     }
   }
 
+  async function resolveCaptcha(accountId, payload) {
+    await postJson(`/api/accounts/${accountId}/captcha/resolve`, payload);
+    await bootstrap();
+  }
+
+  async function retryCaptcha(accountId) {
+    await postJson(`/api/accounts/${accountId}/captcha/retry`, {});
+    await bootstrap();
+  }
+
+  async function clearCaptcha(accountId) {
+    await postJson(`/api/accounts/${accountId}/captcha/clear`, {});
+    await bootstrap();
+  }
+
   async function toggleIncognito(enabled) {
     await postJson("/api/incognito", { enabled });
     await bootstrap();
@@ -135,8 +150,24 @@ export function createAppServices(options) {
     setStatus(els["explorer-output"], JSON.stringify(payload, null, 2));
   }
 
+  async function loadRequestLogs() {
+    const payload = await requestJson("/api/request-logs?limit=120");
+    setAppState({ requestLogs: payload.logs ?? [] });
+    view.renderRequestLogs?.();
+    view.renderDashboard?.();
+    view.renderMetrics?.();
+  }
+
   async function updateRegistration(inviteRequired) {
     await postJson("/api/admin/registration", { inviteRequired });
+    await bootstrap();
+  }
+
+  async function updateSystemSettings(payload) {
+    const result = await postJson("/api/admin/system-settings", payload);
+    setAppState({
+      systemSettings: result.systemSettings
+    });
     await bootstrap();
   }
 
@@ -181,19 +212,24 @@ export function createAppServices(options) {
     batchDisableUsers,
     changeAccount,
     createInvites,
+    clearCaptcha,
     deleteAccount,
     deleteInvite,
     deleteInvites,
     deleteUser,
     handleApiKeyDelete,
     login,
+    loadRequestLogs,
     logout,
     register,
+    resolveCaptcha,
+    retryCaptcha,
     submitApiKey,
     submitExplorer,
     toggleSharedAccountMode,
     updateApiKey,
     toggleIncognito,
+    updateSystemSettings,
     updateRegistration,
     updateUser
   });

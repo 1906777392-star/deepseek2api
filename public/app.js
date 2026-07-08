@@ -17,14 +17,24 @@ import { createSessionWorkspace } from "/session-workspace.js";
 import { createDeltaStreamer } from "/streaming-text.js";
 import { setupAuthTabs } from "/auth-ui.js";
 import { setupThemeController } from "/theme.js";
-import { setActiveTab, setupTabs, wireRippleEffects } from "/ui.js";
+import { getActiveTab, setActiveTab, setupTabs, wireRippleEffects } from "/ui.js";
 import { collectElements, createView, setStatus } from "/view.js";
 let state = freezeState(INITIAL_STATE);
+const REQUEST_LOG_POLL_TABS = new Set(["dashboard", "explorer"]);
 const els = collectElements(ELEMENT_IDS);
 const themeController = setupThemeController();
 let view;
 let workspace;
 let draftFiles;
+
+function getSelectedModel() {
+  return resolveChatModel(els["model-select"].value);
+}
+
+function selectedModelSupportsUploads() {
+  return getSelectedModel().supportsUploads !== false;
+}
+
 const services = createAppServices({
   bootstrap,
   clearComposerInput: () => draftFiles.clearComposerInput(),
@@ -33,10 +43,16 @@ const services = createAppServices({
   loadSessions: () => workspace.loadSessions(),
   setAppState: updateState,
   setStatus,
-  view: { renderShell: () => view.renderShell() }
+  view: {
+    renderDashboard: () => view.renderDashboard(),
+    renderMetrics: () => view.renderMetrics(),
+    renderRequestLogs: () => view.renderRequestLogs(),
+    renderShell: () => view.renderShell()
+  }
 });
 view = createView({
   els,
+  getSelectedModel,
   onDeleteAccount: services.deleteAccount,
   getState: () => state,
   onDeleteDraftFile: (localId) => draftFiles.deleteDraftFile(localId),
@@ -73,6 +89,18 @@ draftFiles = createDraftFileController({
 function freezeState(value) {
   return Object.freeze({ ...value });
 }
+function shouldRefreshRequestLogs() {
+  return Boolean(state.session)
+    && REQUEST_LOG_POLL_TABS.has(getActiveTab())
+    && document.visibilityState !== "hidden";
+}
+function refreshRequestLogsIfVisible() {
+  if (!shouldRefreshRequestLogs()) {
+    return;
+  }
+
+  services.loadRequestLogs().catch(() => {});
+}
 function updateState(patch) {
   state = freezeState({ ...state, ...patch });
 }
@@ -89,6 +117,7 @@ function buildAuthenticatedState(me, discovery) {
     apiKeys: me.apiKeys,
     adminData: me.adminData ?? INITIAL_STATE.adminData,
     registration: me.registration ?? INITIAL_STATE.registration,
+    systemSettings: me.systemSettings ?? me.adminData?.systemSettings ?? INITIAL_STATE.systemSettings,
     selectedAccountId: resolveSelectedAccountId(me.accounts),
     discoveredPaths: discovery.paths
   };
@@ -159,7 +188,8 @@ async function bootstrap() {
   if (!me.authenticated) {
     updateState({
       ...INITIAL_STATE,
-      registration: me.registration ?? INITIAL_STATE.registration
+      registration: me.registration ?? INITIAL_STATE.registration,
+      systemSettings: me.systemSettings ?? INITIAL_STATE.systemSettings
     });
     draftFiles.clearComposerInput();
     view.setView(false);
@@ -172,11 +202,16 @@ async function bootstrap() {
   view.setView(true);
   view.renderShell();
   await workspace.loadSessions();
+  await services.loadRequestLogs();
 }
 
 async function uploadFiles(files) {
   if (!state.selectedAccountId) {
     throw new Error("请先选择可用账号。");
+  }
+
+  if (!selectedModelSupportsUploads()) {
+    throw new Error("专家模式不支持上传文件。");
   }
 
   const nextDraftFiles = files.map(createDraftFileRecord);
@@ -204,6 +239,10 @@ async function sendPrompt() {
   }
 
   const selectedModel = resolveChatModel(els["model-select"].value);
+  if (selectedModel.supportsUploads === false && state.draftFiles.length) {
+    throw new Error("专家模式不支持上传文件。");
+  }
+
   const sessionId = state.selectedSessionId || await workspace.createRemoteSession(!isIncognitoEnabled());
   const snapshot = {
     currentMessageId: state.currentMessageId,
@@ -260,8 +299,14 @@ async function sendPrompt() {
 setupAuthTabs();
 setupTabs();
 initializeResponseModeControl(els["response-mode"]);
-setActiveTab("chat");
+setActiveTab("dashboard");
 wireRippleEffects();
+els["model-select"].onchange = () => {
+  if (!selectedModelSupportsUploads() && state.draftFiles.length) {
+    draftFiles.setDraftFiles([]);
+  }
+  view.renderComposer();
+};
 bindActions({
   els,
   onAccountChange: services.changeAccount,
@@ -273,23 +318,37 @@ bindActions({
   onCreateSession: workspace.createSessionAction,
   onDeleteInvite: services.deleteInvite,
   onDeleteUser: services.deleteUser,
+  onResolveCaptcha: services.resolveCaptcha,
+  onRetryCaptcha: services.retryCaptcha,
+  onClearCaptcha: services.clearCaptcha,
   onExplorerSubmit: services.submitExplorer,
   onLogin: services.login,
   onLogout: services.logout,
+  onRefreshRequestLogs: services.loadRequestLogs,
   onRefreshSessions: workspace.loadSessions,
   onRegister: services.register,
   onSendPrompt: sendPrompt,
   onSubmitApiKey: services.submitApiKey,
   onToggleIncognito: services.toggleIncognito,
   onToggleSharedAccountMode: services.toggleSharedAccountMode,
+  onUpdateSystemSettings: services.updateSystemSettings,
   onToggleInviteRequirement: services.updateRegistration,
   onUpdateUser: services.updateUser,
   onUploadFiles: uploadFiles,
   setStatus
 });
-["apptabchange", "themechange"].forEach((eventName) => {
-  document.addEventListener(eventName, () => {
-    if (state.session) view.renderHeader();
-  });
+document.addEventListener("apptabchange", () => {
+  if (state.session) {
+    view.renderHeader();
+  }
+
+  refreshRequestLogsIfVisible();
 });
+document.addEventListener("themechange", () => {
+  if (state.session) {
+    view.renderHeader();
+  }
+});
+document.addEventListener("visibilitychange", refreshRequestLogsIfVisible);
 bootstrap().catch((error) => setStatus(els["app-status"], error.message));
+window.setInterval(refreshRequestLogsIfVisible, 5000);

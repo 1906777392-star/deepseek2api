@@ -80,7 +80,7 @@ export async function requestChatCompletion(options) {
     thinkingEnabled
   } = options;
 
-  return fetch("/proxy/api/v0/chat/completion", {
+  return fetch("/proxy/chat/completion", {
     method: "POST",
     headers: getProxyHeaders(accountId, { "content-type": "application/json" }),
     body: JSON.stringify({
@@ -177,7 +177,7 @@ export async function consumeAssistantResponse(options) {
 
 async function fetchChatFile(accountId, fileId) {
   const query = new URLSearchParams({ file_ids: fileId });
-  const response = await fetch(`/proxy/api/v0/file/fetch_files?${query}`, {
+  const response = await fetch(`/proxy/file/fetch_files?${query}`, {
     headers: getProxyHeaders(accountId, { accept: "application/json" })
   });
   const payload = await ensureJson(response);
@@ -193,7 +193,7 @@ export async function uploadDraftFile(options) {
   const form = new FormData();
   form.append("file", draftFile.file);
 
-  const response = await fetch("/proxy/api/v0/file/upload_file", {
+  const response = await fetch("/proxy/file/upload_file", {
     method: "POST",
     headers: getProxyHeaders(accountId),
     body: form

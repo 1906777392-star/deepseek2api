@@ -1,3 +1,4 @@
+import { resolveDeepseekApiPath } from "../config.js";
 import { resolveScopedAccount, resolveSession } from "../services/auth-service.js";
 import { deleteChatSession } from "../services/chat-session-service.js";
 import {
@@ -7,10 +8,11 @@ import {
 } from "../services/deepseek-chat-response.js";
 import { isIncognitoEnabledForOwner } from "../services/incognito-service.js";
 import { proxyDeepseekRequest } from "../services/deepseek-proxy.js";
+import { recordRequestLog } from "../services/request-log-service.js";
 import { withOwnerRequestLimit } from "../services/request-limit-service.js";
 import { parseJsonBody, readRequestBody, sendError, sendJson } from "../utils/http.js";
 
-const CHAT_COMPLETION_PATH = "/api/v0/chat/completion";
+const CHAT_COMPLETION_PATH = resolveDeepseekApiPath("/chat/completion");
 
 function resolveLimitStatus(error) {
   return error.code === "USER_DISABLED" ? 403 : 429;
@@ -42,6 +44,12 @@ function getResponseHeaders(upstream) {
   return headers;
 }
 
+function createStatusError(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
 function tryParseChatCompletionBody(body) {
   if (!body?.byteLength) {
     return null;
@@ -54,6 +62,13 @@ function tryParseChatCompletionBody(body) {
   }
 }
 
+function assertChatCompletionUploadsSupported(payload) {
+  const hasFiles = Array.isArray(payload?.ref_file_ids) && payload.ref_file_ids.length > 0;
+  if (payload?.model_type === "expert" && hasFiles) {
+    throw createStatusError(400, "Expert mode does not support file uploads");
+  }
+}
+
 function resolveChatCompletionRequest(method, targetPath, body) {
   if (method !== "POST" || targetPath !== CHAT_COMPLETION_PATH) {
     return null;
@@ -63,6 +78,8 @@ function resolveChatCompletionRequest(method, targetPath, body) {
   if (!payload) {
     return null;
   }
+
+  assertChatCompletionUploadsSupported(payload);
 
   return {
     payload,
@@ -103,13 +120,14 @@ async function writeUpstreamResponse({ onAfterStream, response, upstream }) {
 }
 
 export async function handleProxyRequest(request, response, url, allowedProxyPaths) {
+  const startedAt = Date.now();
   const session = resolveSession(request);
   if (!session) {
     sendError(response, 401, "Unauthorized");
     return true;
   }
 
-  const targetPath = url.pathname.slice("/proxy".length);
+  const targetPath = resolveDeepseekApiPath(url.pathname.slice("/proxy".length));
   if (!allowedProxyPaths.has(targetPath)) {
     sendError(response, 404, "Proxy path not allowed");
     return true;
@@ -117,6 +135,14 @@ export async function handleProxyRequest(request, response, url, allowedProxyPat
 
   const account = resolveScopedAccount(session, request.headers["x-proxy-account-id"]);
   if (!account) {
+    recordRequestLog({
+      method: request.method,
+      path: targetPath,
+      ownerId: session.ownerId,
+      status: 404,
+      durationMs: Date.now() - startedAt,
+      error: "Account not found"
+    });
     sendError(response, 404, "Account not found");
     return true;
   }
@@ -144,6 +170,15 @@ export async function handleProxyRequest(request, response, url, allowedProxyPat
           });
           await cleanup?.();
           sendJson(response, 200, payload);
+          recordRequestLog({
+            method: request.method,
+            path: targetPath,
+            model: chatCompletion.payload?.model_type ?? "",
+            ownerId: session.ownerId,
+            accountId: account.id,
+            status: 200,
+            durationMs: Date.now() - startedAt
+          });
           return;
         } catch (error) {
           await cleanup?.();
@@ -165,8 +200,26 @@ export async function handleProxyRequest(request, response, url, allowedProxyPat
         response,
         upstream
       });
+      recordRequestLog({
+        method: request.method,
+        path: targetPath,
+        ownerId: session.ownerId,
+        accountId: account.id,
+        status: upstream.status,
+        durationMs: Date.now() - startedAt
+      });
     });
   } catch (error) {
+    recordRequestLog({
+      method: request.method,
+      path: targetPath,
+      ownerId: session.ownerId,
+      accountId: account.id,
+      status: error.statusCode ?? resolveLimitStatus(error),
+      durationMs: Date.now() - startedAt,
+      error: error.message
+    });
+
     if (error.statusCode) {
       sendError(response, error.statusCode, error.message);
       return true;

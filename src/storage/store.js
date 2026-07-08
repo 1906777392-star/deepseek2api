@@ -18,6 +18,9 @@ function defaultState() {
     sharedAccountMode: {
       enabled: false
     },
+    systemSettings: {
+      captcha: {}
+    },
     users: []
   };
 }
@@ -46,6 +49,39 @@ function normalizeSharedAccountMode(value, incognito, accounts) {
 
   return {
     enabled: Boolean(value?.enabled && incognito.globalEnabled && hasUsableAccount)
+  };
+}
+
+function normalizeNumber(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(min, Math.min(max, Math.trunc(parsed)));
+}
+
+function normalizeSystemSettings(value) {
+  const captcha = value?.captcha && typeof value.captcha === "object" ? value.captcha : {};
+
+  return {
+    captcha: {
+      yescaptchaEndpoint: typeof captcha.yescaptchaEndpoint === "string" ? captcha.yescaptchaEndpoint : "",
+      yescaptchaKey: typeof captcha.yescaptchaKey === "string" ? captcha.yescaptchaKey : "",
+      autoSolveEnabled: captcha.autoSolveEnabled === undefined ? undefined : Boolean(captcha.autoSolveEnabled),
+      visionFallbackEnabled: captcha.visionFallbackEnabled === undefined
+        ? undefined
+        : Boolean(captcha.visionFallbackEnabled),
+      visionFallbackAccountId: typeof captcha.visionFallbackAccountId === "string"
+        ? captcha.visionFallbackAccountId
+        : null,
+      maxRetries: captcha.maxRetries === undefined
+        ? undefined
+        : normalizeNumber(captcha.maxRetries, undefined, { min: 1, max: 20 }),
+      cooldownMs: captcha.cooldownMs === undefined
+        ? undefined
+        : normalizeNumber(captcha.cooldownMs, undefined, { min: 0, max: 3_600_000 })
+    }
   };
 }
 
@@ -88,6 +124,7 @@ function normalizeState(value) {
     registration: normalizeRegistration(value?.registration),
     sessions: Array.isArray(value?.sessions) ? value.sessions : [],
     sharedAccountMode: normalizeSharedAccountMode(value?.sharedAccountMode, incognito, accounts),
+    systemSettings: normalizeSystemSettings(value?.systemSettings),
     users: normalizeUsers(value?.users)
   };
 }

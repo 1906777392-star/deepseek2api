@@ -1,5 +1,6 @@
 import { createDeepseekDeltaDecoder, createSseParser } from "../utils/deepseek-sse.js";
 import { createChatSession, deleteChatSession } from "./chat-session-service.js";
+import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
 const THINK_OPEN_TAG = "<think>";
@@ -9,21 +10,39 @@ function startCompletion({ account, requestOptions, sessionId }) {
   return proxyDeepseekRequest({
     account,
     method: "POST",
-    path: "/api/v0/chat/completion",
+    path: "/chat/completion",
     body: Buffer.from(
       JSON.stringify({
         chat_session_id: sessionId,
         parent_message_id: null,
         model_type: requestOptions.model.modelType,
         prompt: requestOptions.prompt,
-        ref_file_ids: [],
+        ref_file_ids: requestOptions.refFileIds ?? [],
         thinking_enabled: requestOptions.model.thinkingEnabled,
         search_enabled: requestOptions.model.searchEnabled,
+        action: null,
         preempt: false
       })
     ),
     headers: { "content-type": "application/json" }
   });
+}
+
+async function prepareRequestOptions({ account, requestOptions, sessionId }) {
+  if (!requestOptions.imageInputs?.length) {
+    return { ...requestOptions, refFileIds: requestOptions.refFileIds ?? [] };
+  }
+
+  const refFileIds = await uploadOpenAiVisionFiles({
+    account,
+    imageInputs: requestOptions.imageInputs,
+    sessionId
+  });
+
+  return {
+    ...requestOptions,
+    refFileIds: [...(requestOptions.refFileIds ?? []), ...refFileIds]
+  };
 }
 
 function createThinkingTagger() {
@@ -102,7 +121,8 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
     account,
     deleteAfterFinish,
     onComplete: async (sessionId) => {
-      const { response } = await startCompletion({ account, requestOptions, sessionId });
+      const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
+      const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
       let content = "";
 
       await consumeTaggedStream(response.body, (text) => {
@@ -119,7 +139,8 @@ export async function streamCompletionContent({ account, deleteAfterFinish = fal
     account,
     deleteAfterFinish,
     onComplete: async (sessionId) => {
-      const { response } = await startCompletion({ account, requestOptions, sessionId });
+      const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
+      const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
       await consumeTaggedStream(response.body, onText);
     }
   });

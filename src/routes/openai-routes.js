@@ -3,12 +3,22 @@ import { takeRoundRobinAccount } from "../services/account-rotation-service.js";
 import { isIncognitoEnabledForOwner } from "../services/incognito-service.js";
 import { collectOpenAiResponse, streamOpenAiResponse } from "../services/openai-bridge.js";
 import { listOpenAiModels } from "../services/openai-request.js";
+import { recordRequestLog } from "../services/request-log-service.js";
 import { withOwnerRequestLimit } from "../services/request-limit-service.js";
 import { parseJsonBody, readRequestBody, sendError, sendJson } from "../utils/http.js";
 
 function getBearerToken(request) {
-  const value = request.headers.authorization ?? "";
-  return value.startsWith("Bearer ") ? value.slice(7) : "";
+  const match = /^Bearer\s+(.+)$/i.exec(request.headers.authorization ?? "");
+  return match ? match[1].trim() : "";
+}
+
+function isModelsPath(pathname) {
+  return pathname === "/models" || pathname === "/models/" ||
+    pathname === "/v1/models" || pathname === "/v1/models/";
+}
+
+function isChatCompletionsPath(pathname) {
+  return pathname === "/v1/chat/completions" || pathname === "/v1/chat/completions/";
 }
 
 function resolveLimitStatus(error) {
@@ -45,32 +55,74 @@ async function handleModelsRequest(response, apiKeyRecord) {
 
 async function handleChatCompletionsRequest(request, response, apiKeyRecord) {
   await withOwnerRequestLimit(apiKeyRecord.ownerId, async () => {
+    const startedAt = Date.now();
     const body = parseJsonBody(await readRequestBody(request)) ?? {};
     const account = takeRoundRobinAccount(apiKeyRecord);
     if (!account) {
+      recordRequestLog({
+        method: "POST",
+        path: "/v1/chat/completions",
+        model: body.model,
+        ownerId: apiKeyRecord.ownerId,
+        status: 404,
+        durationMs: Date.now() - startedAt,
+        error: "Account not found"
+      });
       sendError(response, 404, "Account not found");
       return;
     }
 
     const deleteAfterFinish = isIncognitoEnabledForOwner(apiKeyRecord.ownerId);
-    if (body.stream) {
-      await streamOpenAiResponse({
-        response,
+    try {
+      if (body.stream) {
+        await streamOpenAiResponse({
+          response,
+          account,
+          body,
+          deleteAfterFinish,
+          toolCallsEnabled: apiKeyRecord.toolCallsEnabled
+        });
+        recordRequestLog({
+          method: "POST",
+          path: "/v1/chat/completions",
+          model: body.model,
+          ownerId: apiKeyRecord.ownerId,
+          accountId: account.id,
+          status: 200,
+          durationMs: Date.now() - startedAt
+        });
+        return;
+      }
+
+      const payload = await collectOpenAiResponse({
         account,
         body,
         deleteAfterFinish,
         toolCallsEnabled: apiKeyRecord.toolCallsEnabled
       });
-      return;
+      sendJson(response, 200, payload);
+      recordRequestLog({
+        method: "POST",
+        path: "/v1/chat/completions",
+        model: body.model,
+        ownerId: apiKeyRecord.ownerId,
+        accountId: account.id,
+        status: 200,
+        durationMs: Date.now() - startedAt
+      });
+    } catch (error) {
+      recordRequestLog({
+        method: "POST",
+        path: "/v1/chat/completions",
+        model: body.model,
+        ownerId: apiKeyRecord.ownerId,
+        accountId: account.id,
+        status: error.statusCode ?? 500,
+        durationMs: Date.now() - startedAt,
+        error: error.message
+      });
+      throw error;
     }
-
-    const payload = await collectOpenAiResponse({
-      account,
-      body,
-      deleteAfterFinish,
-      toolCallsEnabled: apiKeyRecord.toolCallsEnabled
-    });
-    sendJson(response, 200, payload);
   });
 }
 
@@ -84,12 +136,12 @@ export async function handleOpenAiRequest(request, response, url) {
   }
 
   try {
-    if (request.method === "GET" && url.pathname === "/v1/models") {
+    if (request.method === "GET" && isModelsPath(url.pathname)) {
       await handleModelsRequest(response, apiKeyRecord);
       return true;
     }
 
-    if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+    if (request.method === "POST" && isChatCompletionsPath(url.pathname)) {
       await handleChatCompletionsRequest(request, response, apiKeyRecord);
       return true;
     }

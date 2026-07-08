@@ -1,4 +1,4 @@
-import { setActiveTab } from "/ui.js";
+import { getActiveTab, setActiveTab } from "/ui.js";
 
 function setText(element, value) {
   element.textContent = value || "";
@@ -38,16 +38,24 @@ export function applyRegistrationState(els, registration) {
 }
 
 export function toggleAdminTab(els, enabled) {
-  const adminTabIsActive = Boolean(document.querySelector('[data-tab="admin"].active'));
+  const activeTab = getActiveTab();
+  const adminOnlyActive = activeTab === "admin" || activeTab === "settings";
 
   document.querySelectorAll('[data-admin-only="true"]').forEach((element) => {
+    if (element.classList.contains("tab-pane")) {
+      if (!enabled) {
+        element.classList.add("hidden");
+      }
+      return;
+    }
+
     element.classList.toggle("hidden", !enabled);
   });
 
   if (!enabled) {
     els["tab-admin"].classList.add("hidden");
-    if (adminTabIsActive) {
-      setActiveTab("chat");
+    if (adminOnlyActive) {
+      setActiveTab("dashboard");
     }
   }
 }

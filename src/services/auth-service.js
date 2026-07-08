@@ -86,7 +86,18 @@ function buildAccountRecord({ deviceId, loginResult, loginValue, ownerId, passwo
     displayName: resolveAccountLabel({ emailMasked, loginValue, mobileMasked }),
     emailMasked,
     mobileMasked,
-    areaCode: user.area_code ?? "+86"
+    areaCode: user.area_code ?? "+86",
+    ssoId: user.id,
+    status: "online",
+    captchaState: {
+      triggered: false,
+      triggerTime: null,
+      imageUrl: null,
+      instruction: null,
+      rid: null
+    },
+    settingsReported: false,
+    lastSettingsReport: null
   });
 }
 

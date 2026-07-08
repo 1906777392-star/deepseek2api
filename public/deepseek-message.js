@@ -1,14 +1,9 @@
+import { escapeHtml } from "/utils.js";
+
 const SECTION_KIND_BY_TYPE = Object.freeze({
   THINK: "thinking",
   RESPONSE: "response"
 });
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
 
 function resolveSectionKind(type) {
   return type ? (SECTION_KIND_BY_TYPE[type] ?? "response") : null;

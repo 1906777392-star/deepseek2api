@@ -1,4 +1,5 @@
 import { renderMessageContent } from "/deepseek-message.js";
+import { createEmptyState, escapeHtml } from "/utils.js";
 
 const BOTTOM_STICK_THRESHOLD_PX = 48;
 const MESSAGE_SECTION_SELECTOR = "[data-message-section]";
@@ -15,22 +16,6 @@ const ROLE_LABELS = Object.freeze({
   SYSTEM: "系统",
   USER: "用户"
 });
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function createEmptyState(title, description) {
-  return `
-    <article class="empty-state">
-      <strong>${escapeHtml(title)}</strong>
-      <span>${escapeHtml(description)}</span>
-    </article>
-  `;
-}
 
 function resolveRoleAvatar(role) {
   return ROLE_AVATARS[role] ?? escapeHtml(String(role).slice(0, 2).toUpperCase());

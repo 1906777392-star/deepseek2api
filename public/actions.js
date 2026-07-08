@@ -37,7 +37,10 @@ function bindWorkspaceActions({
   els,
   onAccountChange,
   onAddAccount,
+  onClearCaptcha,
   onLogout,
+  onResolveCaptcha,
+  onRetryCaptcha,
   onToggleIncognito,
   onToggleSharedAccountMode,
   setStatus
@@ -99,6 +102,48 @@ function bindWorkspaceActions({
       setStatus(els["shared-mode-status"], error.message);
     }
   };
+
+  els["account-list"].addEventListener("submit", async (event) => {
+    const form = event.target.closest("[data-captcha-form]");
+    if (!form) {
+      return;
+    }
+
+    event.preventDefault();
+    setStatus(els["account-status"], "提交验证码结果中...");
+
+    try {
+      await onResolveCaptcha(form.dataset.captchaForm, {
+        rid: form.querySelector("[data-captcha-rid]")?.value.trim() ?? "",
+        coordinateText: form.querySelector("[data-captcha-coordinates]")?.value.trim() ?? ""
+      });
+      setStatus(els["account-status"], "验证码状态已更新。");
+    } catch (error) {
+      setStatus(els["account-status"], error.message);
+    }
+  });
+
+  els["account-list"].addEventListener("click", async (event) => {
+    const retryButton = event.target.closest("[data-captcha-retry]");
+    const clearButton = event.target.closest("[data-captcha-clear]");
+    const accountId = retryButton?.dataset.captchaRetry || clearButton?.dataset.captchaClear;
+    if (!accountId) {
+      return;
+    }
+
+    setStatus(els["account-status"], retryButton ? "自动处理验证码中..." : "清理验证码状态中...");
+
+    try {
+      if (retryButton) {
+        await onRetryCaptcha(accountId);
+      } else {
+        await onClearCaptcha(accountId);
+      }
+      setStatus(els["account-status"], "验证码状态已更新。");
+    } catch (error) {
+      setStatus(els["account-status"], error.message);
+    }
+  });
 }
 
 function bindSessionActions({ els, onCreateSession, onRefreshSessions, setStatus }) {
@@ -166,7 +211,18 @@ function bindComposerActions({ els, onSendPrompt, setStatus }) {
   };
 }
 
-function bindFormActions({ els, onExplorerSubmit, onSubmitApiKey, setStatus }) {
+function bindFormActions({ els, onExplorerSubmit, onRefreshRequestLogs, onSubmitApiKey, setStatus }) {
+  if (els["refresh-request-logs"]) {
+    els["refresh-request-logs"].onclick = async () => {
+      setStatus(els["explorer-output"], "");
+      try {
+        await onRefreshRequestLogs();
+      } catch (error) {
+        setStatus(els["explorer-output"], error.message);
+      }
+    };
+  }
+
   els["api-key-form"].onsubmit = async (event) => {
     event.preventDefault();
     setStatus(els["api-key-output"], "");
@@ -199,6 +255,38 @@ function bindFormActions({ els, onExplorerSubmit, onSubmitApiKey, setStatus }) {
   };
 }
 
+function bindSystemSettingsActions({ els, onUpdateSystemSettings, setStatus }) {
+  if (!els["settings-form"]) {
+    return;
+  }
+
+  els["settings-form"].onsubmit = async (event) => {
+    event.preventDefault();
+    setStatus(els["settings-status"], "保存中...");
+
+    try {
+      await onUpdateSystemSettings({
+        captcha: {
+          yescaptchaEndpoint: els["settings-endpoint"].value.trim(),
+          ...(els["settings-yescaptcha-key"].value.trim() || els["settings-clear-yescaptcha-key"].checked
+            ? { yescaptchaKey: els["settings-clear-yescaptcha-key"].checked ? "" : els["settings-yescaptcha-key"].value.trim() }
+            : {}),
+          autoSolveEnabled: els["settings-auto-solve"].checked,
+          visionFallbackEnabled: els["settings-vision-fallback"].checked,
+          visionFallbackAccountId: els["settings-vision-account"].value || null,
+          maxRetries: els["settings-max-retries"].value,
+          cooldownMs: els["settings-cooldown-ms"].value
+        }
+      });
+      els["settings-yescaptcha-key"].value = "";
+      els["settings-clear-yescaptcha-key"].checked = false;
+      setStatus(els["settings-status"], "系统设置已保存。");
+    } catch (error) {
+      setStatus(els["settings-status"], error.message);
+    }
+  };
+}
+
 export function bindActions(options) {
   bindAuthActions(options);
   bindWorkspaceActions(options);
@@ -206,5 +294,6 @@ export function bindActions(options) {
   bindUploadActions(options);
   bindComposerActions(options);
   bindFormActions(options);
+  bindSystemSettingsActions(options);
   bindAdminActions(options);
 }

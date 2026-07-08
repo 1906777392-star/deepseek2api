@@ -5,6 +5,7 @@ import {
   getSharedAccountMode,
   setSharedAccountModeEnabled
 } from "../services/shared-account-mode-service.js";
+import { updateSystemSettings } from "../services/system-settings-service.js";
 import { deleteUsers, setUsersDisabled, updateUser } from "../services/user-service.js";
 import { parseJsonBody, readRequestBody, sendError, sendJson } from "../utils/http.js";
 
@@ -50,6 +51,24 @@ async function handleSharedAccountModeRoute(request, response, url) {
       setSharedAccountModeEnabled(body.enabled);
       sendJson(response, 200, {
         sharedAccountMode: getSharedAccountMode()
+      });
+    } catch (error) {
+      sendError(response, 400, error.message);
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+async function handleSystemSettingsRoute(request, response, url) {
+  if (request.method === "POST" && url.pathname === "/api/admin/system-settings") {
+    const body = await readJsonRequest(request);
+
+    try {
+      sendJson(response, 200, {
+        systemSettings: updateSystemSettings(body)
       });
     } catch (error) {
       sendError(response, 400, error.message);
@@ -135,6 +154,10 @@ export async function handleAdminApiRequest({ request, response, url }) {
   }
 
   if (await handleSharedAccountModeRoute(request, response, url)) {
+    return true;
+  }
+
+  if (await handleSystemSettingsRoute(request, response, url)) {
     return true;
   }
 

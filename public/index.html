@@ -92,29 +92,37 @@
             <span class="nav-brand-dot"></span>
             <div class="nav-brand-copy">
               <span class="eyebrow">Workspace</span>
-              <span class="nav-brand-name">控制台</span>
+              <span class="nav-brand-name">DeepSeek2API</span>
             </div>
           </div>
           <div class="nav-items">
-            <button type="button" class="nav-item active" data-tab="chat" aria-label="聊天" data-ripple>
-              <span class="nav-icon">💬</span>
+            <button type="button" class="nav-item active" data-tab="dashboard" aria-label="仪表盘" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M7 16V9m5 7V5m5 11v-4" /></svg></span>
+              <span class="nav-label">仪表盘</span>
+            </button>
+            <button type="button" class="nav-item" data-tab="chat" aria-label="聊天" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3V6Z" /></svg></span>
               <span class="nav-label">聊天</span>
             </button>
-            <button type="button" class="nav-item" data-tab="accounts" aria-label="账号" data-ripple>
-              <span class="nav-icon">👤</span>
-              <span class="nav-label">账号</span>
+            <button type="button" class="nav-item" data-tab="accounts" aria-label="账号管理" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 8a7 7 0 0 0-14 0" /></svg></span>
+              <span class="nav-label">账号管理</span>
             </button>
-            <button type="button" class="nav-item" data-tab="keys" aria-label="密钥" data-ripple>
-              <span class="nav-icon">🔑</span>
-              <span class="nav-label">密钥</span>
+            <button type="button" class="nav-item" data-tab="keys" aria-label="API Key" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 10a4 4 0 1 0-2.8 3.82L9 16h3v3h3v-3l3-3-1-1" /></svg></span>
+              <span class="nav-label">API Key</span>
             </button>
-            <button type="button" class="nav-item" data-tab="explorer" aria-label="代理" data-ripple>
-              <span class="nav-icon">🔍</span>
-              <span class="nav-label">代理</span>
+            <button type="button" class="nav-item" data-tab="explorer" aria-label="请求日志" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4" /></svg></span>
+              <span class="nav-label">请求日志</span>
             </button>
-            <button type="button" class="nav-item hidden" data-tab="admin" data-admin-only="true" aria-label="管理" data-ripple>
-              <span class="nav-icon">⚙️</span>
-              <span class="nav-label">管理</span>
+            <button type="button" class="nav-item hidden" data-tab="settings" data-admin-only="true" aria-label="系统设置" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3m0 12v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M3 12h3m12 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg></span>
+              <span class="nav-label">系统设置</span>
+            </button>
+            <button type="button" class="nav-item hidden" data-tab="admin" data-admin-only="true" aria-label="用户管理" data-ripple>
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 2a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM3 20a5 5 0 0 1 10 0m3 0a4 4 0 0 0-4-4" /></svg></span>
+              <span class="nav-label">用户管理</span>
             </button>
           </div>
           <div class="nav-footer">
@@ -130,7 +138,7 @@
             <div class="page-header-main">
               <div class="page-header-copy">
                 <span class="eyebrow">Overview</span>
-                <h1 id="page-title" class="page-header-title">聊天</h1>
+                    <h1 id="page-title" class="page-header-title">仪表盘首页</h1>
               </div>
               <div class="page-header-meta">
                 <div class="status-badges">
@@ -163,19 +171,43 @@
               <div id="sessions" class="session-list stack"></div>
             </aside>
             <section class="page-content surface-card reveal">
-              <section id="tab-chat" class="tab-pane chat-section">
+              <section id="tab-dashboard" class="tab-pane page-section dashboard-home">
+                <div class="page-title-row">
+                  <div>
+                    <h2>仪表盘首页</h2>
+                    <p class="muted">查看账号健康、请求趋势、最近调用和验证码告警。</p>
+                  </div>
+                  <button type="button" class="button-secondary" data-tab="chat" data-ripple>进入聊天</button>
+                </div>
+                <div id="dashboard-health-cards" class="dashboard-card-grid"></div>
+                <div class="dashboard-overview-grid">
+                  <article class="settings-card surface-inset">
+                    <div class="section-heading"><div><span class="eyebrow">Trend</span><h3>请求趋势</h3></div></div>
+                    <div id="dashboard-request-chart" class="dashboard-chart"></div>
+                  </article>
+                  <article class="settings-card surface-inset">
+                    <div class="section-heading"><div><span class="eyebrow">Captcha</span><h3>验证码告警</h3></div></div>
+                    <div id="captcha-alert-list" class="alert-list"></div>
+                  </article>
+                </div>
+                <article class="settings-card surface-inset">
+                  <div class="section-heading"><div><span class="eyebrow">Recent</span><h3>最近请求</h3></div></div>
+                  <div id="dashboard-recent-logs" class="request-log-list compact"></div>
+                </article>
+              </section>
+              <section id="tab-chat" class="tab-pane chat-section hidden">
                 <div class="chat-toolbar">
                   <label class="input-group compact-field">
                     <span>模型</span>
                     <select id="model-select">
-                      <option value="deepseek-chat-fast">快速</option>
-                      <option value="deepseek-chat-fast-search">快速（联网）</option>
-                      <option value="deepseek-reasoner-fast">快速-深度</option>
-                      <option value="deepseek-reasoner-fast-search">快速-深度（联网）</option>
-                      <option value="deepseek-chat-expert">专家</option>
-                      <option value="deepseek-chat-expert-search">专家（联网）</option>
-                      <option value="deepseek-reasoner-expert">专家-深度</option>
-                      <option value="deepseek-reasoner-expert-search">专家-深度（联网）</option>
+                      <option value="deepseek-chat">快速模式</option>
+                      <option value="deepseek-chat-search">快速模式 + 搜索</option>
+                      <option value="deepseek-reasoner">快速模式 + 深度思考</option>
+                      <option value="deepseek-reasoner-search">快速模式 + 思考 + 搜索</option>
+                      <option value="deepseek-chat-expert">专家模式</option>
+                      <option value="deepseek-reasoner-expert">专家模式 + 深度思考</option>
+                      <option value="deepseek-vision">识图模式</option>
+                      <option value="deepseek-vision-reasoner">识图模式 + 深度思考</option>
                     </select>
                   </label>
                   <label class="input-group compact-field">
@@ -233,8 +265,14 @@
                   </article>
                 </div>
               </section>
-              <section id="tab-keys" class="tab-pane page-section hidden">
-                <form id="api-key-form" class="form-grid">
+              <section id="tab-keys" class="tab-pane page-section hidden api-key-page">
+                <div class="page-title-row">
+                  <div>
+                    <h2>API Key 管理</h2>
+                    <p class="muted">创建和管理您的 API Key，使用 API 访问 DeepSeek2API 服务。</p>
+                  </div>
+                </div>
+                <form id="api-key-form" class="form-grid api-key-create-form">
                   <label class="input-group"><span>标签</span><input id="api-key-label" placeholder="例如：主账号"></label>
                   <label class="input-group"><span>自定义 Key</span><input id="api-key-plain" placeholder="可留空"></label>
                   <label class="toggle-chip settings-toggle">
@@ -246,7 +284,18 @@
                 <pre id="api-key-output" class="status hidden"></pre>
                 <div id="api-keys" class="key-list stack"></div>
               </section>
-              <section id="tab-explorer" class="tab-pane page-section hidden">
+              <section id="tab-explorer" class="tab-pane page-section hidden logs-page">
+                <div class="page-title-row">
+                  <div>
+                    <h2>请求日志监控</h2>
+                    <p class="muted">实时查看 OpenAI 兼容接口和代理转发请求状态。</p>
+                  </div>
+                  <div class="inline-actions">
+                    <span class="chip">5 秒自动刷新</span>
+                    <button id="refresh-request-logs" type="button" class="button-secondary" data-ripple>刷新日志</button>
+                  </div>
+                </div>
+                <div id="request-log-list" class="request-log-list"></div>
                 <form id="explorer-form" class="explorer-form">
                   <div class="explorer-grid">
                     <label class="input-group"><span>路径</span><select id="explorer-path"></select></label>
@@ -257,6 +306,52 @@
                   <div class="form-actions"><button type="submit" class="button-primary" data-ripple>执行</button></div>
                 </form>
                 <pre id="explorer-output" class="status status-large hidden"></pre>
+              </section>
+              <section id="tab-settings" class="tab-pane page-section hidden settings-page" data-admin-only="true">
+                <div class="page-title-row">
+                  <div>
+                    <h2>系统设置</h2>
+                    <p class="muted">集中管理基础信息、注册策略、风控验证码和版本说明。</p>
+                  </div>
+                </div>
+                <div class="settings-panel-grid">
+                  <article class="settings-card surface-inset">
+                    <div class="section-heading"><div><span class="eyebrow">Basic</span><h3>基础</h3></div></div>
+                    <div class="settings-kv">
+                      <span>服务地址</span><strong id="settings-origin"></strong>
+                      <span>协议版本</span><strong>DeepSeek Web 2.2.0</strong>
+                      <span>前端模式</span><strong>Vanilla ES Modules</strong>
+                    </div>
+                  </article>
+                  <article class="settings-card surface-inset">
+                    <div class="section-heading"><div><span class="eyebrow">Registration</span><h3>注册</h3></div></div>
+                    <p class="muted section-copy">邀请码开关仍在“用户管理”中维护；此处用于快速查看当前策略。</p>
+                    <div class="settings-kv">
+                      <span>邀请码</span><strong id="settings-registration-summary">关闭</strong>
+                    </div>
+                  </article>
+                  <article class="settings-card surface-inset settings-risk-card">
+                    <div class="section-heading"><div><span class="eyebrow">Risk</span><h3>风控与验证码</h3></div></div>
+                    <form id="settings-form" class="settings-form vertical-form">
+                      <label class="input-group"><span>YesCaptcha Endpoint</span><input id="settings-endpoint" placeholder="https://api.yescaptcha.com"></label>
+                      <label class="input-group"><span>YesCaptcha Key</span><input id="settings-yescaptcha-key" type="password" autocomplete="off"></label>
+                      <label class="toggle-chip settings-toggle"><input id="settings-clear-yescaptcha-key" type="checkbox"><span>清空已配置 Key</span></label>
+                      <label class="toggle-chip settings-toggle"><input id="settings-auto-solve" type="checkbox"><span>自动处理验证码</span></label>
+                      <label class="toggle-chip settings-toggle"><input id="settings-vision-fallback" type="checkbox"><span>启用 DeepSeek Vision 降级</span></label>
+                      <label class="input-group"><span>Vision 备用账号</span><select id="settings-vision-account"></select></label>
+                      <div class="form-grid two-cols">
+                        <label class="input-group"><span>最大重试</span><input id="settings-max-retries" type="number" min="1" max="20"></label>
+                        <label class="input-group"><span>冷却毫秒</span><input id="settings-cooldown-ms" type="number" min="0" step="1000"></label>
+                      </div>
+                      <div class="form-actions"><button type="submit" class="button-primary" data-ripple>保存设置</button></div>
+                    </form>
+                    <pre id="settings-status" class="status hidden"></pre>
+                  </article>
+                  <article class="settings-card surface-inset">
+                    <div class="section-heading"><div><span class="eyebrow">About</span><h3>关于</h3></div></div>
+                    <p class="muted section-copy">本控制台提供 OpenAI 兼容接口、DeepSeek 协议代理、请求日志、账号池与验证码恢复工作流。</p>
+                  </article>
+                </div>
               </section>
               <section id="tab-admin" class="tab-pane page-section hidden">
                 <div class="settings-grid admin-grid">
@@ -294,11 +389,24 @@
           </div>
         </div>
         <nav class="bottom-tab-bar surface-card" aria-label="移动导航">
-          <button type="button" class="bottom-tab-item active" data-tab="chat" aria-label="聊天" data-ripple><span class="bottom-tab-icon">💬</span><span>聊天</span></button>
-          <button type="button" class="bottom-tab-item" data-tab="accounts" aria-label="账号" data-ripple><span class="bottom-tab-icon">👤</span><span>账号</span></button>
-          <button type="button" class="bottom-tab-item" data-tab="keys" aria-label="密钥" data-ripple><span class="bottom-tab-icon">🔑</span><span>密钥</span></button>
-          <button type="button" class="bottom-tab-item" data-tab="explorer" aria-label="代理" data-ripple><span class="bottom-tab-icon">🔍</span><span>代理</span></button>
-          <button type="button" class="bottom-tab-item hidden" data-tab="admin" data-admin-only="true" aria-label="管理" data-ripple><span class="bottom-tab-icon">⚙️</span><span>管理</span></button>
+          <button type="button" class="bottom-tab-item active" data-tab="dashboard" aria-label="仪表盘" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M7 16V9m5 7V5m5 11v-4" /></svg></span><span>概览</span>
+          </button>
+          <button type="button" class="bottom-tab-item" data-tab="chat" aria-label="聊天" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 6h14v9H8l-3 3V6Z" /></svg></span><span>聊天</span>
+          </button>
+          <button type="button" class="bottom-tab-item" data-tab="accounts" aria-label="账号管理" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 8a7 7 0 0 0-14 0" /></svg></span><span>账号</span>
+          </button>
+          <button type="button" class="bottom-tab-item" data-tab="keys" aria-label="API Key" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 10a4 4 0 1 0-2.8 3.82L9 16h3v3h3v-3l3-3-1-1" /></svg></span><span>Key</span>
+          </button>
+          <button type="button" class="bottom-tab-item" data-tab="explorer" aria-label="请求日志" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6zM9 8h6M9 12h6M9 16h4" /></svg></span><span>日志</span>
+          </button>
+          <button type="button" class="bottom-tab-item hidden" data-tab="settings" data-admin-only="true" aria-label="系统设置" data-ripple>
+            <span class="bottom-tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-5v3m0 12v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M3 12h3m12 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1" /></svg></span><span>设置</span>
+          </button>
         </nav>
       </section>
     </div>

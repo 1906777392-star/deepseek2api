@@ -1,5 +1,6 @@
-import { config } from "../config.js";
+import { config, resolveDeepseekApiPath } from "../config.js";
 import { saveAccount } from "./account-service.js";
+import { reportClientSettingsForAccount } from "./deepseek-settings.js";
 
 function isEmail(loginValue) {
   return loginValue.includes("@");
@@ -7,11 +8,11 @@ function isEmail(loginValue) {
 
 export function createBaseHeaders(token, extraHeaders = {}) {
   const headers = {
-    "x-app-version": config.deepseekHeaders.appVersion,
+    "x-client-locale": config.deepseekHeaders.locale,
+    "x-client-bundle-id": config.deepseekHeaders.clientBundleId,
+    "x-client-timezone-offset": config.deepseekHeaders.timezoneOffset,
     "x-client-version": config.deepseekHeaders.clientVersion,
     "x-client-platform": config.deepseekHeaders.clientPlatform,
-    "x-client-locale": config.deepseekHeaders.locale,
-    "x-client-timezone-offset": config.deepseekHeaders.timezoneOffset,
     ...extraHeaders
   };
 
@@ -23,18 +24,19 @@ export function createBaseHeaders(token, extraHeaders = {}) {
 }
 
 function buildLoginPayload(loginValue, password, deviceId) {
+  const emailLogin = isEmail(loginValue);
   return {
-    email: isEmail(loginValue) ? loginValue : "",
-    mobile: isEmail(loginValue) ? "" : loginValue,
+    email: emailLogin ? loginValue : "",
+    mobile: emailLogin ? "" : loginValue,
     password,
-    area_code: "+86",
+    area_code: emailLogin ? "" : "+86",
     device_id: deviceId,
     os: "web"
   };
 }
 
 export async function loginToDeepseek({ loginValue, password, deviceId }) {
-  const response = await fetch(`${config.deepseekBaseUrl}/api/v0/users/login`, {
+  const response = await fetch(`${config.deepseekBaseUrl}${resolveDeepseekApiPath("/users/login")}`, {
     method: "POST",
     headers: createBaseHeaders("", { "content-type": "application/json" }),
     body: JSON.stringify(buildLoginPayload(loginValue, password, deviceId))
@@ -55,8 +57,14 @@ export async function refreshAccountToken(account) {
     deviceId: account.deviceId
   });
 
-  return saveAccount({
+  const user = loginResult.data.biz_data.user;
+  const refreshedAccount = saveAccount({
     ...account,
-    token: loginResult.data.biz_data.user.token
+    token: user.token,
+    ssoId: user.id,
+    status: "online"
   });
+
+  await reportClientSettingsForAccount(refreshedAccount);
+  return refreshedAccount;
 }

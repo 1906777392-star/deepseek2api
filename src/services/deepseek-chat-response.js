@@ -1,7 +1,7 @@
 import { createDeepseekDeltaDecoder, createSseParser } from "../utils/deepseek-sse.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
-const CHAT_COMPLETION_PATH = "/api/v0/chat/completion";
+const CHAT_COMPLETION_PATH = "/chat/completion";
 const JSON_HEADERS = Object.freeze({
   "content-type": "application/json"
 });

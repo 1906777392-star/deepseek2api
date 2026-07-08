@@ -12,7 +12,15 @@ import {
   resolveAccountLabel
 } from "../services/account-service.js";
 import { loginToDeepseek } from "../services/deepseek-auth.js";
+import { resolveDeepseekDeviceId } from "../services/deepseek-device.js";
+import { reportClientSettingsForAccount } from "../services/deepseek-settings.js";
+import {
+  attemptCaptchaAutoSolveForAccount,
+  clearCaptchaState,
+  resolveCaptchaManually
+} from "../services/captcha-service.js";
 import { setGlobalIncognitoEnabled, setOwnerIncognitoEnabled } from "../services/incognito-service.js";
+import { listRequestLogs } from "../services/request-log-service.js";
 import {
   assertOwnerHasUsableAccount,
   isSharedAccountModeEnabled
@@ -23,15 +31,6 @@ import { parseJsonBody, readRequestBody, sendError, sendJson } from "../utils/ht
 
 async function readJsonRequest(request) {
   return parseJsonBody(await readRequestBody(request)) ?? {};
-}
-
-function requireDeviceId(response, body) {
-  if (body.deviceId) {
-    return true;
-  }
-
-  sendError(response, 400, "Missing deviceId");
-  return false;
 }
 
 function toIncognitoPayload(session) {
@@ -49,24 +48,23 @@ function toIncognitoPayload(session) {
 
 async function handleAccountCreation(request, response, session) {
   const body = await readJsonRequest(request);
-  if (!requireDeviceId(response, body)) {
-    return true;
-  }
+  const deviceId = resolveDeepseekDeviceId(body.deviceId);
 
   try {
     const loginResult = await loginToDeepseek({
       loginValue: body.username,
       password: body.password,
-      deviceId: body.deviceId
+      deviceId
     });
     const account = saveDeepseekAccountForOwner({
       ownerId: session.ownerId,
       loginValue: body.username,
       password: body.password,
-      deviceId: body.deviceId,
+      deviceId,
       loginResult
     });
 
+    await reportClientSettingsForAccount(account);
     sendJson(response, 200, { account: toPublicAccount(account) });
   } catch (error) {
     sendError(response, 401, error.message);
@@ -104,6 +102,40 @@ function handleAccountDeletion(response, session, url) {
   return true;
 }
 
+async function handleCaptchaAction(request, response, session, url) {
+  const match = /^\/api\/accounts\/([^/]+)\/captcha\/(resolve|retry|clear)$/.exec(url.pathname);
+  if (!match || request.method !== "POST") {
+    return false;
+  }
+
+  const [, accountId, action] = match;
+  const account = resolveScopedAccount(session, accountId);
+  if (!account) {
+    sendError(response, 404, "Account not found");
+    return true;
+  }
+
+  try {
+    if (action === "resolve") {
+      const body = await readJsonRequest(request);
+      sendJson(response, 200, { account: toPublicAccount(await resolveCaptchaManually(account, body)) });
+      return true;
+    }
+
+    if (action === "retry") {
+      const result = await attemptCaptchaAutoSolveForAccount(account, { force: true });
+      sendJson(response, 200, { account: toPublicAccount(result.account), source: result.source });
+      return true;
+    }
+
+    sendJson(response, 200, { account: toPublicAccount(clearCaptchaState(account)) });
+  } catch (error) {
+    sendError(response, 400, error.message);
+  }
+
+  return true;
+}
+
 function resolveApiKeyAccount(session, requestedAccountId) {
   if (!isSharedAccountModeEnabled()) {
     const account = resolveScopedAccount(session, requestedAccountId);
@@ -118,6 +150,17 @@ function resolveApiKeyAccount(session, requestedAccountId) {
 }
 
 export async function handlePrivateApiRequest({ request, response, session, url }) {
+  if (request.method === "GET" && url.pathname === "/api/request-logs") {
+    sendJson(response, 200, {
+      logs: listRequestLogs({
+        includeAll: session.role === "admin",
+        limit: url.searchParams.get("limit") ?? 100,
+        ownerId: session.ownerId
+      })
+    });
+    return true;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/accounts") {
     sendJson(response, 200, {
       accounts: getVisibleAccounts(session).map(toPublicAccount)
@@ -127,6 +170,10 @@ export async function handlePrivateApiRequest({ request, response, session, url 
 
   if (request.method === "POST" && url.pathname === "/api/accounts") {
     return handleAccountCreation(request, response, session);
+  }
+
+  if (await handleCaptchaAction(request, response, session, url)) {
+    return true;
   }
 
   if (request.method === "DELETE" && url.pathname.startsWith("/api/accounts/")) {

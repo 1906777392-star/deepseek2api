@@ -25,6 +25,7 @@ export function createApiKeyRecord({
     ownerId,
     accountId,
     label,
+    key,
     keyHash: hashValue(key),
     preview: `${key.slice(0, 8)}...${key.slice(-4)}`,
     createdAt: new Date().toISOString(),

@@ -23,6 +23,23 @@ function createChatToolCalls(calls, startIndex = 0) {
   }));
 }
 
+function extractImageInputs(messages) {
+  return (messages ?? []).flatMap((message) => {
+    if (!Array.isArray(message?.content)) {
+      return [];
+    }
+
+    return message.content.flatMap((part) => {
+      if (part?.type !== "image_url") {
+        return [];
+      }
+
+      const imageUrl = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
+      return imageUrl ? [{ url: imageUrl, detail: part.image_url?.detail ?? "auto" }] : [];
+    });
+  });
+}
+
 function resolveCompletionRequest(body, toolCallsEnabled) {
   assertNoLegacySearchOptions(body);
 
@@ -31,6 +48,17 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   }
 
   const model = resolveOpenAiModel(body?.model);
+  const imageInputs = extractImageInputs(body?.messages ?? []);
+  const refFileIds = Array.isArray(body?.ref_file_ids) ? body.ref_file_ids.filter(Boolean) : [];
+
+  if ((imageInputs.length || refFileIds.length) && model.supportsUploads === false) {
+    throw createOpenAiError(400, "Expert models do not support file or image uploads");
+  }
+
+  if (imageInputs.length && model.modelType !== "vision") {
+    throw createOpenAiError(400, "Image inputs require deepseek-vision or deepseek-vision-reasoner");
+  }
+
   const promptRequest = buildOpenAiPrompt({
     messages: body?.messages ?? [],
     toolChoice: toolCallsEnabled ? body?.tool_choice : undefined,
@@ -40,6 +68,7 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   return {
     model,
     prompt: promptRequest.prompt,
+    imageInputs,
     toolChoicePolicy: promptRequest.toolChoicePolicy,
     toolNames: promptRequest.toolNames
   };

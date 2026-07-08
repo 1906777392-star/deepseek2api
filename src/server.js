@@ -34,7 +34,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (url.pathname.startsWith("/v1/")) {
+    if (url.pathname.startsWith("/v1/") || url.pathname === "/models" || url.pathname === "/models/") {
       const handled = await handleOpenAiRequest(request, response, url);
       if (!handled) {
         sendError(response, 404, "OpenAI route not found");

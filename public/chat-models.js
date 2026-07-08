@@ -1,12 +1,12 @@
 const CHAT_MODELS = Object.freeze([
-  Object.freeze({ id: "deepseek-chat-fast", modelType: "default", searchEnabled: false, thinkingEnabled: false }),
-  Object.freeze({ id: "deepseek-chat-fast-search", modelType: "default", searchEnabled: true, thinkingEnabled: false }),
-  Object.freeze({ id: "deepseek-reasoner-fast", modelType: "default", searchEnabled: false, thinkingEnabled: true }),
-  Object.freeze({ id: "deepseek-reasoner-fast-search", modelType: "default", searchEnabled: true, thinkingEnabled: true }),
-  Object.freeze({ id: "deepseek-chat-expert", modelType: "expert", searchEnabled: false, thinkingEnabled: false }),
-  Object.freeze({ id: "deepseek-chat-expert-search", modelType: "expert", searchEnabled: true, thinkingEnabled: false }),
-  Object.freeze({ id: "deepseek-reasoner-expert", modelType: "expert", searchEnabled: false, thinkingEnabled: true }),
-  Object.freeze({ id: "deepseek-reasoner-expert-search", modelType: "expert", searchEnabled: true, thinkingEnabled: true })
+  Object.freeze({ id: "deepseek-chat", modelType: "default", searchEnabled: false, thinkingEnabled: false, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-chat-search", modelType: "default", searchEnabled: true, thinkingEnabled: false, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-reasoner", modelType: "default", searchEnabled: false, thinkingEnabled: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-reasoner-search", modelType: "default", searchEnabled: true, thinkingEnabled: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-chat-expert", modelType: "expert", searchEnabled: false, thinkingEnabled: false, supportsUploads: false }),
+  Object.freeze({ id: "deepseek-reasoner-expert", modelType: "expert", searchEnabled: false, thinkingEnabled: true, supportsUploads: false }),
+  Object.freeze({ id: "deepseek-vision", modelType: "vision", searchEnabled: false, thinkingEnabled: false, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-vision-reasoner", modelType: "vision", searchEnabled: false, thinkingEnabled: true, supportsUploads: true })
 ]);
 
 const CHAT_MODEL_MAP = Object.freeze(
