@@ -107,7 +107,12 @@ export function createDeepseekDeltaDecoder() {
 
   return {
     consume(payloadText) {
-      const payload = JSON.parse(payloadText);
+      let payload;
+      try {
+        payload = JSON.parse(payloadText);
+      } catch {
+        return null;
+      }
       currentKind = resolveCurrentKind(payload, currentKind);
       const text = extractFragmentText(payload);
       return text ? { kind: currentKind, text } : null;
@@ -116,6 +121,11 @@ export function createDeepseekDeltaDecoder() {
 }
 
 export function extractContentDelta(payloadText) {
-  const payload = JSON.parse(payloadText);
+  let payload;
+  try {
+    payload = JSON.parse(payloadText);
+  } catch {
+    return "";
+  }
   return extractFragmentText(payload);
 }

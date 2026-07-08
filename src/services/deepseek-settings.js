@@ -37,7 +37,16 @@ async function fetchScopeSettings(account, scope) {
     method: "GET",
     headers: createSettingsHeaders(account, { accept: "application/json" })
   });
-  const payload = await response.json();
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(
+      `Settings ${scope} request failed (HTTP ${response.status}): unable to parse response. ` +
+      `This may indicate network connectivity issues to chat.deepseek.com`
+    );
+  }
 
   if (!response.ok || payload?.data?.biz_code !== 0) {
     throw new Error(payload?.data?.biz_msg || payload?.msg || `Settings ${scope} failed`);

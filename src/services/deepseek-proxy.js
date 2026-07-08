@@ -36,7 +36,15 @@ async function fetchPowChallenge(account, path) {
     body: JSON.stringify({ target_path: path })
   });
 
-  const payload = await response.json();
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(
+      `PoW challenge request failed (HTTP ${response.status}): unable to parse response. ` +
+      `This may indicate network connectivity issues to chat.deepseek.com`
+    );
+  }
   const challenge = payload?.data?.biz_data?.challenge;
   if (!response.ok || payload?.data?.biz_code !== 0 || !challenge) {
     throw new Error(payload?.data?.biz_msg || payload?.msg || "Failed to create PoW challenge");
@@ -126,7 +134,14 @@ async function maybeRefreshAccount(response, account) {
 
   const buffer = Buffer.from(await response.arrayBuffer());
   const payloadText = buffer.toString("utf8");
-  const payload = contentType.includes("application/json") ? JSON.parse(payloadText) : null;
+  let payload = null;
+  if (contentType.includes("application/json")) {
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      // Response body truncated or malformed — treat as non-refreshable
+    }
+  }
   const bizCode = payload?.data?.biz_code ?? payload?.code;
   const shouldRefresh = bizCode === 40002 || bizCode === 40003;
 
