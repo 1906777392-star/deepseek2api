@@ -71,10 +71,21 @@ function createLocalUserSession(user) {
   });
 }
 
+function resolveDeepseekUser(loginResult) {
+  return loginResult?.data?.biz_data?.user
+    ?? loginResult?.data?.user
+    ?? loginResult?.user
+    ?? null;
+}
+
 function buildAccountRecord({ deviceId, loginResult, loginValue, ownerId }) {
-  const user = loginResult.data.biz_data.user;
+  const user = resolveDeepseekUser(loginResult);
+  if (!user?.id || !user?.token) {
+    throw new Error("DeepSeek 登录成功，但响应中没有可用账号令牌");
+  }
+
   const emailMasked = user.email ?? "";
-  const mobileMasked = user.mobile_number ?? "";
+  const mobileMasked = user.mobile_number ?? user.mobile ?? "";
 
   return saveAccount({
     ownerId,
