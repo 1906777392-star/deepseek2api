@@ -8,7 +8,12 @@ if (existsSync(envFile)) {
   loadEnvFile();
 }
 
-const dataDirectory = join(process.cwd(), "data");
+// Vercel 的部署目录是只读的；/tmp 才允许运行时写入。
+// 本地运行仍使用仓库内 data/ 目录。
+const isVercel = Boolean(process.env.VERCEL);
+const dataDirectory = isVercel
+  ? (process.env.APP_DATA_DIR || "/tmp/deepseek2api-data")
+  : join(process.cwd(), "data");
 
 mkdirSync(dataDirectory, { recursive: true });
 
