@@ -47,9 +47,6 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   if ((imageInputs.length || refFileIds.length) && model.supportsUploads === false) {
     throw createOpenAiError(400, "Expert models do not support file or image uploads");
   }
-  if (imageInputs.length && model.modelType !== "vision") {
-    throw createOpenAiError(400, "Image inputs require deepseek-vision or deepseek-vision-reasoner");
-  }
 
   const promptRequest = buildOpenAiPrompt({
     messages: body?.messages ?? [],
