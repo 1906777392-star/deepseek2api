@@ -161,7 +161,12 @@ function parseMarkupBlock(attrs, inner) {
   const jsonName = toStringSafe(
     jsonTool?.name ?? jsonTool?.tool_name ?? jsonTool?.function_name ?? jsonTool?.function?.name
   ).trim();
-  if (jsonName) {
+  const usesAliasName = Boolean(jsonName && !jsonTool?.name && !jsonTool?.function?.name);
+  const hasExplicitArguments = Boolean(jsonTool && (
+    ["input", "arguments", "parameters", "args"].some((key) => Object.hasOwn(jsonTool, key)) ||
+    (jsonTool.function && Object.hasOwn(jsonTool.function, "arguments"))
+  ));
+  if (jsonName && (!usesAliasName || hasExplicitArguments)) {
     const jsonArguments = jsonTool?.input ?? jsonTool?.arguments ?? jsonTool?.parameters ??
       jsonTool?.args ?? jsonTool?.function?.arguments ?? {};
     return buildParsedToolCall(jsonName, normalizeJsonArguments(jsonArguments));
