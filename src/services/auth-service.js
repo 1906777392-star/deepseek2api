@@ -71,7 +71,7 @@ function createLocalUserSession(user) {
   });
 }
 
-function buildAccountRecord({ deviceId, loginResult, loginValue, ownerId, password }) {
+function buildAccountRecord({ deviceId, loginResult, loginValue, ownerId }) {
   const user = loginResult.data.biz_data.user;
   const emailMasked = user.email ?? "";
   const mobileMasked = user.mobile_number ?? "";
@@ -80,7 +80,8 @@ function buildAccountRecord({ deviceId, loginResult, loginValue, ownerId, passwo
     ownerId,
     deepseekUserId: user.id,
     loginValue,
-    password,
+    // 登录密码只用于当前请求。显式写入 undefined 也会清掉旧记录中的明文密码。
+    password: undefined,
     deviceId,
     token: user.token,
     displayName: resolveAccountLabel({ emailMasked, loginValue, mobileMasked }),
