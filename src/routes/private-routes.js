@@ -11,7 +11,11 @@ import {
   listUsableAccountsForOwner,
   resolveAccountLabel
 } from "../services/account-service.js";
-import { loginToDeepseek } from "../services/deepseek-auth.js";
+import {
+  loginToDeepseek,
+  loginToDeepseekWithSms,
+  sendDeepseekSmsCode
+} from "../services/deepseek-auth.js";
 import { resolveDeepseekDeviceId } from "../services/deepseek-device.js";
 import { reportClientSettingsForAccount } from "../services/deepseek-settings.js";
 import {
@@ -51,15 +55,12 @@ async function handleAccountCreation(request, response, session) {
   const deviceId = resolveDeepseekDeviceId(body.deviceId);
 
   try {
-    const loginResult = await loginToDeepseek({
-      loginValue: body.username,
-      password: body.password,
-      deviceId
-    });
+    const loginResult = body.smsCode
+      ? await loginToDeepseekWithSms({ mobile: body.username, code: body.smsCode, deviceId })
+      : await loginToDeepseek({ loginValue: body.username, password: body.password, deviceId });
     const account = saveDeepseekAccountForOwner({
       ownerId: session.ownerId,
       loginValue: body.username,
-      password: body.password,
       deviceId,
       loginResult
     });
@@ -68,6 +69,20 @@ async function handleAccountCreation(request, response, session) {
     sendJson(response, 200, { account: toPublicAccount(account) });
   } catch (error) {
     sendError(response, 401, error.message);
+  }
+
+  return true;
+}
+
+async function handleSmsCodeRequest(request, response) {
+  const body = await readJsonRequest(request);
+  const deviceId = resolveDeepseekDeviceId(body.deviceId);
+
+  try {
+    await sendDeepseekSmsCode({ mobile: body.username, deviceId });
+    sendJson(response, 200, { ok: true, deviceId });
+  } catch (error) {
+    sendError(response, 400, error.message);
   }
 
   return true;
@@ -166,6 +181,10 @@ export async function handlePrivateApiRequest({ request, response, session, url 
       accounts: getVisibleAccounts(session).map(toPublicAccount)
     });
     return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/accounts/sms-code") {
+    return handleSmsCodeRequest(request, response);
   }
 
   if (request.method === "POST" && url.pathname === "/api/accounts") {
