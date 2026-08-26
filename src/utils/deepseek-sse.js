@@ -55,11 +55,19 @@ export function createSseParser(onEvent) {
 
 const FRAGMENT_KIND_BY_TYPE = Object.freeze({
   THINK: "thinking",
-  RESPONSE: "response"
+  THINKING: "thinking",
+  REASONING: "thinking",
+  RESPONSE: "response",
+  ANSWER: "response",
+  FINAL: "response",
+  FINAL_ANSWER: "response",
+  TEXT: "response",
+  VISION: "response",
+  VISION_RESPONSE: "response"
 });
 
 function resolveFragmentKind(type) {
-  return FRAGMENT_KIND_BY_TYPE[type] ?? null;
+  return FRAGMENT_KIND_BY_TYPE[String(type ?? "").toUpperCase()] ?? null;
 }
 
 function joinPath(parent, child) {
@@ -154,10 +162,14 @@ export function createDeepseekDeltaDecoder() {
       collectSearchResults(value, searchResults, seenSearchUrls);
       const deltas = [];
       value.forEach((fragment) => {
-        const kind = resolveFragmentKind(fragment?.type);
-        if (kind) currentKind = kind;
+        // Vision responses have used several fragment type names. Unknown textual
+        // fragments are answer text unless the stream explicitly labels them as
+        // thinking; dropping them caused valid image answers to look like an
+        // empty completion.
+        const kind = resolveFragmentKind(fragment?.type) ?? currentKind ?? "response";
+        currentKind = kind;
         const text = stripReferenceMarkers(fragment?.content);
-        if (text && kind) deltas.push({ kind, text });
+        if (text) deltas.push({ kind, text });
       });
       return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null);
     }

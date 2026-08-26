@@ -3,6 +3,13 @@ import { acquireChatSession, releaseChatSession } from "./chat-session-service.j
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
+class EmptyCompletionError extends Error {
+  constructor() {
+    super("DeepSeek returned an empty completion");
+    this.name = "EmptyCompletionError";
+  }
+}
+
 async function startCompletion({ account, requestOptions, sessionId }) {
   const result = await proxyDeepseekRequest({
     account,
@@ -41,17 +48,18 @@ async function startCompletion({ account, requestOptions, sessionId }) {
 }
 
 async function consumeCompletionStream(stream, onDelta) {
-  if (!stream) {
-    return { searchResults: [] };
-  }
+  if (!stream) return { searchResults: [], sawOutput: false };
 
   const decoder = new TextDecoder();
   const deltaDecoder = createDeepseekDeltaDecoder();
+  let sawOutput = false;
   const parser = createSseParser(({ data }) => {
     const decoded = deltaDecoder.consume(data);
     const deltas = Array.isArray(decoded) ? decoded : (decoded ? [decoded] : []);
     deltas.forEach((delta) => {
-      if (delta?.text) onDelta(delta);
+      if (!delta?.text) return;
+      sawOutput = true;
+      onDelta(delta);
     });
   });
 
@@ -60,7 +68,7 @@ async function consumeCompletionStream(stream, onDelta) {
   }
 
   parser.flush();
-  return { searchResults: deltaDecoder.getSearchResults() };
+  return { searchResults: deltaDecoder.getSearchResults(), sawOutput };
 }
 
 async function prepareRequestOptions({ account, requestOptions, sessionId }) {
@@ -90,9 +98,8 @@ async function prepareRequestOptions({ account, requestOptions, sessionId }) {
   };
 }
 
-async function withCompletionSession({ account, deleteAfterFinish, onComplete }) {
-  const lease = await acquireChatSession(account, deleteAfterFinish);
-
+async function withCompletionSession({ account, disposable, onComplete }) {
+  const lease = await acquireChatSession(account, disposable);
   try {
     return await onComplete(lease.id);
   } finally {
@@ -100,31 +107,56 @@ async function withCompletionSession({ account, deleteAfterFinish, onComplete })
   }
 }
 
-export async function collectCompletionContent({ account, deleteAfterFinish = false, requestOptions }) {
+async function runCompletionAttempt({ account, requestOptions, onDelta }) {
+  const hasImages = Boolean(requestOptions.imageInputs?.length);
   return withCompletionSession({
     account,
-    deleteAfterFinish,
+    // Uploaded vision files are scoped to their chat session. Reusing a pooled
+    // text session can make DeepSeek accept the request but return an empty SSE.
+    disposable: hasImages,
     onComplete: async (sessionId) => {
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
-      let content = "";
-      let reasoningContent = "";
-
-      const { searchResults } = await consumeCompletionStream(response.body, (delta) => {
-        if (delta.kind === "thinking") {
-          reasoningContent += delta.text;
-        } else {
-          content += delta.text;
-        }
-      });
-
-      if (!content.trim() && !reasoningContent.trim()) {
-        throw new Error("DeepSeek returned an empty completion");
-      }
-
-      return { content, reasoningContent, searchResults };
+      const result = await consumeCompletionStream(response.body, onDelta);
+      if (!result.sawOutput) throw new EmptyCompletionError();
+      return result;
     }
   });
+}
+
+async function runWithVisionRetry(options) {
+  const hasImages = Boolean(options.requestOptions.imageInputs?.length);
+  const attempts = hasImages ? 2 : 1;
+  let lastError;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await runCompletionAttempt(options);
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof EmptyCompletionError) || attempt + 1 >= attempts) throw error;
+    }
+  }
+
+  throw lastError;
+}
+
+export async function collectCompletionContent({ account, deleteAfterFinish = false, requestOptions }) {
+  let content = "";
+  let reasoningContent = "";
+  const result = await runWithVisionRetry({
+    account,
+    requestOptions,
+    onDelta: (delta) => {
+      if (delta.kind === "thinking") reasoningContent += delta.text;
+      else content += delta.text;
+    }
+  });
+
+  // Text requests retain the old delete-after-finish behaviour. Vision requests
+  // are always disposable because their uploaded files belong to that session.
+  void deleteAfterFinish;
+  return { content, reasoningContent, searchResults: result.searchResults };
 }
 
 export async function streamCompletionContent({
@@ -134,33 +166,22 @@ export async function streamCompletionContent({
   onText,
   requestOptions
 }) {
-  return withCompletionSession({
+  const hasImages = Boolean(requestOptions.imageInputs?.length);
+  if (hasImages) {
+    onDelta?.({ kind: "thinking", text: "正在读取图片…\n" });
+    onText?.("正在读取图片…\n", "thinking");
+  }
+
+  void deleteAfterFinish;
+  return runWithVisionRetry({
     account,
-    deleteAfterFinish,
-    onComplete: async (sessionId) => {
-      const hasImages = Boolean(requestOptions.imageInputs?.length);
-      if (hasImages) {
-        onDelta?.({ kind: "thinking", text: "正在读取图片…\n" });
-        onText?.("正在读取图片…\n", "thinking");
+    requestOptions,
+    onDelta: (delta) => {
+      if (onDelta) {
+        onDelta(delta);
+        return;
       }
-
-      const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
-      const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
-      let sawOutput = false;
-      const result = await consumeCompletionStream(response.body, (delta) => {
-        sawOutput = true;
-        if (onDelta) {
-          onDelta(delta);
-          return;
-        }
-        onText?.(delta.text, delta.kind);
-      });
-
-      if (!sawOutput) {
-        throw new Error("DeepSeek returned an empty completion");
-      }
-
-      return result;
+      onText?.(delta.text, delta.kind);
     }
   });
 }
