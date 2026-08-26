@@ -133,6 +133,19 @@ function parseMarkupInput(raw) {
   return parseJsonObject(text) ?? {};
 }
 
+function normalizeJsonArguments(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || "{}";
+  }
+
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return "{}";
+}
+
 function buildParsedToolCall(name, argumentsText) {
   const normalizedArguments = argumentsText.trim() ? argumentsText.trim() : "{}";
   return {
@@ -145,8 +158,13 @@ function buildParsedToolCall(name, argumentsText) {
 
 function parseMarkupBlock(attrs, inner) {
   const jsonTool = parseJsonObject(inner);
-  if (jsonTool?.name) {
-    return buildParsedToolCall(jsonTool.name, JSON.stringify(jsonTool.input ?? {}));
+  const jsonName = toStringSafe(
+    jsonTool?.name ?? jsonTool?.tool_name ?? jsonTool?.function_name ?? jsonTool?.function?.name
+  ).trim();
+  if (jsonName) {
+    const jsonArguments = jsonTool?.input ?? jsonTool?.arguments ?? jsonTool?.parameters ??
+      jsonTool?.args ?? jsonTool?.function?.arguments ?? {};
+    return buildParsedToolCall(jsonName, normalizeJsonArguments(jsonArguments));
   }
 
   const attrName = attrs.match(TOOL_ATTR_PATTERN)?.[2] ?? "";

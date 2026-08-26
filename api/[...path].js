@@ -21,6 +21,7 @@ const FAKE_HEADERS = {
 };
 
 const TIMEZONE_OFFSET = 28800; // 秒，中国时区
+const TOOL_WRAPPER_PATTERN = /<\/?(?:[a-z0-9_:-]+:)?(?:tool_calls|function_calls)\b[^>]*>/gi;
 
 const MODELS = [
   'deepseek-chat',
@@ -102,6 +103,48 @@ function messagesToPrompt(messages) {
     parts.push(lastUser);
   }
   return parts.join('\n\n');
+}
+
+function stripToolWrappers(text) {
+  return String(text || '').replace(TOOL_WRAPPER_PATTERN, '');
+}
+
+function createToolWrapperFilter(enabled, onText) {
+  let pending = '';
+
+  const emit = (text) => {
+    const clean = enabled ? stripToolWrappers(text) : text;
+    if (clean) onText(clean);
+  };
+
+  return {
+    push(text) {
+      if (!enabled) {
+        emit(String(text || ''));
+        return;
+      }
+
+      pending += String(text || '');
+      const lastOpen = pending.lastIndexOf('<');
+      if (lastOpen >= 0 && !pending.slice(lastOpen).includes('>')) {
+        emit(pending.slice(0, lastOpen));
+        pending = pending.slice(lastOpen);
+        return;
+      }
+
+      emit(pending);
+      pending = '';
+    },
+    flush() {
+      if (!pending) return;
+      const lower = pending.toLowerCase();
+      const looksLikeProtocolFragment = [
+        '<tool_calls', '</tool_calls', '<function_calls', '</function_calls'
+      ].some((tag) => tag.startsWith(lower));
+      if (!looksLikeProtocolFragment) emit(pending);
+      pending = '';
+    },
+  };
 }
 
 function sendJson(res, status, obj) {
@@ -211,13 +254,14 @@ function solvePow(challenge) {
 }
 
 // ===== SSE 转换（DeepSeek → OpenAI）=====
-function transformSSE(deepseekStream, model, res, onDone) {
+function transformSSE(deepseekStream, model, res, onDone, filterToolWrappers) {
   const decoder = new TextDecoder();
   const id = `chatcmpl-${Date.now()}`;
   const created = Math.floor(Date.now() / 1000);
   const thinkingModel = /r1|think|reason/i.test(model);
   let emittedRole = false;
   let currentPath = '';
+  let lastOutputPath = '';
   let finished = false;
 
   const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
@@ -229,12 +273,20 @@ function transformSSE(deepseekStream, model, res, onDone) {
       chunk({ role: 'assistant', content: '' });
     }
   };
+  const filters = {
+    thinking: createToolWrapperFilter(filterToolWrappers, (text) => chunk({ reasoning_content: text })),
+    content: createToolWrapperFilter(filterToolWrappers, (text) => chunk({ content: text })),
+  };
+  const flushPath = (path) => {
+    if (path && filters[path]) filters[path].flush();
+  };
   const sendByPath = (text) => {
     if (!text) return;
     ensureRole();
     const path = currentPath || (thinkingModel ? 'thinking' : 'content');
-    if (path === 'thinking') chunk({ reasoning_content: text });
-    else chunk({ content: text });
+    if (lastOutputPath && lastOutputPath !== path) flushPath(lastOutputPath);
+    lastOutputPath = path;
+    filters[path].push(text);
   };
   const handleFragment = (frag, setPath) => {
     if (setPath) {
@@ -247,6 +299,7 @@ function transformSSE(deepseekStream, model, res, onDone) {
   const finishStream = () => {
     if (finished) return;
     finished = true;
+    flushPath(lastOutputPath);
     ensureRole();
     chunk({}, 'stop');
     res.write('data: [DONE]\n\n');
@@ -298,7 +351,7 @@ function transformSSE(deepseekStream, model, res, onDone) {
 }
 
 // 非流式：收集完整内容
-async function collectContent(deepseekStream, model) {
+async function collectContent(deepseekStream, model, filterToolWrappers) {
   const decoder = new TextDecoder();
   const reader = deepseekStream.getReader();
   const thinkingModel = /r1|think|reason/i.test(model);
@@ -313,6 +366,10 @@ async function collectContent(deepseekStream, model) {
     if (path === 'thinking') reasoning += text;
     else content += text;
   };
+  const result = () => ({
+    content: filterToolWrappers ? stripToolWrappers(content) : content,
+    reasoning: filterToolWrappers ? stripToolWrappers(reasoning) : reasoning,
+  });
   const handleFragment = (frag, setPath) => {
     if (setPath) {
       const type = String(frag?.type || '').toUpperCase();
@@ -331,7 +388,7 @@ async function collectContent(deepseekStream, model) {
     for (const line of lines) {
       if (!line.startsWith('data:')) continue;
       const payload = line.replace(/^data:\s*/, '').trim();
-      if (payload === '[DONE]') return { content, reasoning };
+      if (payload === '[DONE]') return result();
       let data;
       try { data = JSON.parse(payload); } catch { continue; }
       const p = data?.p;
@@ -350,7 +407,7 @@ async function collectContent(deepseekStream, model) {
       if (typeof v === 'string') append(v);
     }
   }
-  return { content, reasoning };
+  return result();
 }
 
 // ===== handler =====
@@ -363,6 +420,7 @@ async function handleCompletions(req, res) {
 
   const model = typeof body.model === 'string' && body.model.trim() ? body.model.trim() : 'deepseek-chat';
   const stream = body.stream !== false;
+  const filterToolWrappers = Array.isArray(body.tools) && body.tools.length > 0;
   const { modelType, thinkingEnabled, searchEnabled } = resolveModelOptions(model, body);
   const prompt = messagesToPrompt(body.messages);
   if (!prompt) return errorResponse(res, 400, 'messages 为空');
@@ -439,11 +497,11 @@ async function handleCompletions(req, res) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
-      transformSSE(resp.body, model, res, cleanup);
+      transformSSE(resp.body, model, res, cleanup, filterToolWrappers);
       return;
     }
 
-    const { content, reasoning } = await collectContent(resp.body, model);
+    const { content, reasoning } = await collectContent(resp.body, model, filterToolWrappers);
     cleanup();
     const message = { role: 'assistant', content };
     if (reasoning) message.reasoning_content = reasoning;

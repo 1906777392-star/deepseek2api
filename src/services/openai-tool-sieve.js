@@ -8,6 +8,11 @@ const TOOL_CAPTURE_PAIRS = Object.freeze([
   { open: "<invoke", close: "</invoke>" },
   { open: "<tool_use", close: "</tool_use>" }
 ]);
+const ORPHAN_WRAPPER_CLOSE_TAGS = Object.freeze(["</tool_calls", "</function_calls"]);
+const TOOL_TAG_PREFIXES = Object.freeze([
+  ...TOOL_CAPTURE_PAIRS.map(({ open }) => open),
+  ...ORPHAN_WRAPPER_CLOSE_TAGS
+]);
 
 function isInsideCodeFence(state, prefix) {
   const combined = `${state.emittedText}${prefix}`;
@@ -21,7 +26,7 @@ function findPartialToolTagStart(text) {
   }
 
   const tail = text.slice(lastIndex).toLowerCase();
-  return TOOL_CAPTURE_PAIRS.some(({ open }) => open.startsWith(tail)) ? lastIndex : -1;
+  return TOOL_TAG_PREFIXES.some((tag) => tag.startsWith(tail)) ? lastIndex : -1;
 }
 
 function findToolSegmentStart(state, text) {
@@ -49,6 +54,36 @@ function findToolSegmentStart(state, text) {
     }
 
     offset = bestIndex + matchedOpen.length;
+  }
+
+  return -1;
+}
+
+function findOrphanWrapperCloseStart(state, text) {
+  const lower = text.toLowerCase();
+  let offset = 0;
+
+  while (offset < lower.length) {
+    let bestIndex = -1;
+    let matchedTag = "";
+
+    for (const tag of ORPHAN_WRAPPER_CLOSE_TAGS) {
+      const index = lower.indexOf(tag, offset);
+      if (index >= 0 && (bestIndex === -1 || index < bestIndex)) {
+        bestIndex = index;
+        matchedTag = tag;
+      }
+    }
+
+    if (bestIndex === -1) {
+      return -1;
+    }
+
+    if (!isInsideCodeFence(state, text.slice(0, bestIndex))) {
+      return bestIndex;
+    }
+
+    offset = bestIndex + matchedTag.length;
   }
 
   return -1;
@@ -136,10 +171,22 @@ export function createToolSieve(allowedToolNames = []) {
         break;
       }
 
-      const start = findToolSegmentStart(state, state.pending);
-      if (start >= 0) {
-        pushTextEvent(state, events, state.pending.slice(0, start));
-        state.capture = state.pending.slice(start);
+      const toolStart = findToolSegmentStart(state, state.pending);
+      const orphanCloseStart = findOrphanWrapperCloseStart(state, state.pending);
+      if (orphanCloseStart >= 0 && (toolStart < 0 || orphanCloseStart < toolStart)) {
+        pushTextEvent(state, events, state.pending.slice(0, orphanCloseStart));
+        const closeEnd = state.pending.indexOf(">", orphanCloseStart);
+        if (closeEnd < 0) {
+          state.pending = state.pending.slice(orphanCloseStart);
+          break;
+        }
+        state.pending = state.pending.slice(closeEnd + 1);
+        continue;
+      }
+
+      if (toolStart >= 0) {
+        pushTextEvent(state, events, state.pending.slice(0, toolStart));
+        state.capture = state.pending.slice(toolStart);
         state.pending = "";
         state.capturing = true;
         continue;
@@ -165,13 +212,18 @@ export function createToolSieve(allowedToolNames = []) {
           if (consumed.calls?.length) {
             events.push({ type: "tool_calls", calls: consumed.calls });
           }
-          pushTextEvent(state, events, consumed.suffix ?? "");
-        } else {
-          pushTextEvent(state, events, state.capture);
+          state.pending = `${consumed.suffix ?? ""}${state.pending}`;
+          events.push(...drain());
         }
       }
 
-      pushTextEvent(state, events, state.pending);
+      const pendingClose = findOrphanWrapperCloseStart(state, state.pending);
+      if (pendingClose < 0 && findPartialToolTagStart(state.pending) < 0) {
+        pushTextEvent(state, events, state.pending);
+      } else if (pendingClose > 0) {
+        pushTextEvent(state, events, state.pending.slice(0, pendingClose));
+      }
+
       state.capture = "";
       state.capturing = false;
       state.pending = "";
