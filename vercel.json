@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    { "source": "/v1/:path*", "destination": "/api/:path*" },
+    { "source": "/models", "destination": "/api/models" }
+  ]
+}
