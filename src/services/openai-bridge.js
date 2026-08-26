@@ -80,8 +80,39 @@ function formatSearchSources(searchResults = []) {
 function redactSensitiveReasoning(value) {
   return String(value ?? "")
     .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [已隐藏]")
-    .replace(/((?:password|passwd|pwd|userToken|access[_-]?token|authorization|token_2|登录码|密码)\s*(?:is|是|为|[:=：])\s*[\"'“”]?)([^\s\"'“”},，。]{4,})/gi, "$1[已隐藏]")
+    .replace(/((?:password|passwd|pwd|userToken|access[_-]?token|authorization|token_2|登录码|密码)\s*(?:is|是|为|[:=：])\s*[\"'“”]?)([^\s\"'“”},，。；;！？!?]{4,})/gi, "$1[已隐藏]")
     .replace(/([\"'](?:password|passwd|pwd|userToken|access_token|authorization|token_2)[\"']\s*:\s*[\"'])([^\"']+)([\"'])/gi, "$1[已隐藏]$3");
+}
+
+function createStreamingReasoningRedactor(onSafeText) {
+  let pending = "";
+
+  function emitCompleteUnits() {
+    let cut = 0;
+    const boundary = /[\n。！？!?；;]/g;
+    for (const match of pending.matchAll(boundary)) {
+      cut = (match.index ?? 0) + match[0].length;
+    }
+
+    if (cut <= 0) return;
+    const complete = pending.slice(0, cut);
+    pending = pending.slice(cut);
+    const safe = redactSensitiveReasoning(complete);
+    if (safe) onSafeText(safe);
+  }
+
+  return Object.freeze({
+    push(text) {
+      pending += String(text ?? "");
+      emitCompleteUnits();
+    },
+    flush() {
+      if (!pending) return;
+      const safe = redactSensitiveReasoning(pending);
+      pending = "";
+      if (safe) onSafeText(safe);
+    }
+  });
 }
 
 function withReasoning(message, reasoningContent) {
@@ -161,8 +192,6 @@ export async function streamOpenAiResponse(options) {
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   let toolCallIndex = 0;
   let sawToolCall = false;
-  let reasoningBuffer = "";
-  let reasoningEmitted = false;
 
   response.writeHead(200, {
     "cache-control": "no-cache, no-transform",
@@ -184,21 +213,19 @@ export async function streamOpenAiResponse(options) {
     toolCallIndex += calls.length;
   };
 
-  const emitReasoning = () => {
-    if (reasoningEmitted) return;
-    reasoningEmitted = true;
-    const safeReasoning = redactSensitiveReasoning(reasoningBuffer);
-    if (!safeReasoning) return;
+  const emitReasoningText = (text) => {
+    if (!text) return;
     writeSseChunk(response, buildChunkPayload(
       completionId,
       requestOptions.model.id,
-      { reasoning_content: safeReasoning }
+      { reasoning_content: text }
     ));
   };
+  const reasoningRedactor = createStreamingReasoningRedactor(emitReasoningText);
 
   const emitResponseText = (text) => {
     if (!text) return;
-    emitReasoning();
+    reasoningRedactor.flush();
     if (!toolSieve) {
       writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text }));
       return;
@@ -218,7 +245,7 @@ export async function streamOpenAiResponse(options) {
     deleteAfterFinish,
     onDelta: (delta) => {
       if (delta.kind === "thinking") {
-        reasoningBuffer += delta.text;
+        reasoningRedactor.push(delta.text);
       } else {
         emitResponseText(delta.text);
       }
@@ -226,7 +253,7 @@ export async function streamOpenAiResponse(options) {
     requestOptions
   });
 
-  emitReasoning();
+  reasoningRedactor.flush();
   emitResponseText(formatSearchSources(searchResults));
 
   if (toolSieve) {
