@@ -77,8 +77,16 @@ function formatSearchSources(searchResults = []) {
   return entries.length ? `\n\n**参考来源**\n${entries.join("\n")}` : "";
 }
 
+function redactSensitiveReasoning(value) {
+  return String(value ?? "")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [已隐藏]")
+    .replace(/((?:password|passwd|pwd|userToken|access[_-]?token|authorization|token_2|登录码|密码)\s*(?:is|是|为|[:=：])\s*[\"'“”]?)([^\s\"'“”},，。]{4,})/gi, "$1[已隐藏]")
+    .replace(/([\"'](?:password|passwd|pwd|userToken|access_token|authorization|token_2)[\"']\s*:\s*[\"'])([^\"']+)([\"'])/gi, "$1[已隐藏]$3");
+}
+
 function withReasoning(message, reasoningContent) {
-  return reasoningContent ? { ...message, reasoning_content: reasoningContent } : message;
+  const safeReasoning = redactSensitiveReasoning(reasoningContent);
+  return safeReasoning ? { ...message, reasoning_content: safeReasoning } : message;
 }
 
 function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent, searchResults) {
@@ -153,6 +161,7 @@ export async function streamOpenAiResponse(options) {
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   let toolCallIndex = 0;
   let sawToolCall = false;
+  let reasoningBuffer = "";
 
   response.writeHead(200, {
     "cache-control": "no-cache, no-transform",
@@ -195,17 +204,22 @@ export async function streamOpenAiResponse(options) {
     deleteAfterFinish,
     onDelta: (delta) => {
       if (delta.kind === "thinking") {
-        writeSseChunk(response, buildChunkPayload(
-          completionId,
-          requestOptions.model.id,
-          { reasoning_content: delta.text }
-        ));
+        reasoningBuffer += delta.text;
       } else {
         emitResponseText(delta.text);
       }
     },
     requestOptions
   });
+
+  const safeReasoning = redactSensitiveReasoning(reasoningBuffer);
+  if (safeReasoning) {
+    writeSseChunk(response, buildChunkPayload(
+      completionId,
+      requestOptions.model.id,
+      { reasoning_content: safeReasoning }
+    ));
+  }
 
   emitResponseText(formatSearchSources(searchResults));
 
