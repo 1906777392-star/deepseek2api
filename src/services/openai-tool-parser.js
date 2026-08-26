@@ -1,5 +1,15 @@
 import { randomUUID } from "node:crypto";
 
+const DSML_TAGS = new Set([
+  "tool_calls",
+  "function_calls",
+  "tool_call",
+  "function_call",
+  "invoke",
+  "tool_use"
+]);
+const DSML_OPEN_TAG_PATTERN = /<\|[a-z0-9_.:-]+\|([a-z0-9_.:-]+)([^>]*)>/gi;
+const DSML_CLOSE_TAG_PATTERN = /<\/\|[a-z0-9_.:-]+\|([a-z0-9_.:-]+)\s*>/gi;
 const TOOL_BLOCK_PATTERN = /<(?:[a-z0-9_:-]+:)?(tool_call|function_call|invoke)\b([^>]*)>([\s\S]*?)<\/(?:[a-z0-9_:-]+:)?\1>/gi;
 const TOOL_SELFCLOSE_PATTERN = /<(?:[a-z0-9_:-]+:)?invoke\b([^>]*)\/>/gi;
 const TOOL_KV_PATTERN = /<(?:[a-z0-9_:-]+:)?([a-z0-9_.-]+)\b[^>]*>([\s\S]*?)<\/(?:[a-z0-9_:-]+:)?\1>/gi;
@@ -30,6 +40,18 @@ function toStringSafe(value) {
   }
 
   return String(value);
+}
+
+function normalizeProtocolMarkup(text) {
+  return toStringSafe(text)
+    .replace(DSML_OPEN_TAG_PATTERN, (match, rawName, attrs) => {
+      const name = toStringSafe(rawName).toLowerCase();
+      return DSML_TAGS.has(name) ? `<${name}${attrs}>` : match;
+    })
+    .replace(DSML_CLOSE_TAG_PATTERN, (match, rawName) => {
+      const name = toStringSafe(rawName).toLowerCase();
+      return DSML_TAGS.has(name) ? `</${name}>` : match;
+    });
 }
 
 function stripFencedCodeBlocks(text) {
@@ -186,7 +208,7 @@ function parseMarkupBlock(attrs, inner) {
 
 function parseMarkupToolCalls(text) {
   const output = [];
-  const source = toStringSafe(text).trim();
+  const source = normalizeProtocolMarkup(text).trim();
 
   for (const match of source.matchAll(TOOL_BLOCK_PATTERN)) {
     const parsed = parseMarkupBlock(toStringSafe(match[2]).trim(), toStringSafe(match[3]).trim());
@@ -215,7 +237,7 @@ function filterAllowedToolCalls(calls, allowedToolNames) {
 }
 
 export function parseToolCallsFromText(text, allowedToolNames = []) {
-  const source = toStringSafe(text);
+  const source = normalizeProtocolMarkup(text);
   if (!source.trim()) {
     return [];
   }

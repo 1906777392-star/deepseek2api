@@ -6,11 +6,25 @@ const TOOL_CAPTURE_PAIRS = Object.freeze([
   { open: "<tool_call", close: "</tool_call>" },
   { open: "<function_call", close: "</function_call>" },
   { open: "<invoke", close: "</invoke>" },
-  { open: "<tool_use", close: "</tool_use>" }
+  { open: "<tool_use", close: "</tool_use>" },
+  { open: "<|dsml|tool_call", close: "</tool_call>" },
+  { open: "<|dsml|function_call", close: "</function_call>" },
+  { open: "<|dsml|invoke", close: "</invoke>" },
+  { open: "<|dsml|tool_use", close: "</tool_use>" }
 ]);
-const ORPHAN_WRAPPER_CLOSE_TAGS = Object.freeze(["</tool_calls", "</function_calls"]);
+const IGNORED_WRAPPER_OPEN_TAGS = Object.freeze([
+  "<|dsml|tool_calls",
+  "<|dsml|function_calls"
+]);
+const ORPHAN_WRAPPER_CLOSE_TAGS = Object.freeze([
+  "</tool_calls",
+  "</function_calls",
+  "</|dsml|tool_calls",
+  "</|dsml|function_calls"
+]);
 const TOOL_TAG_PREFIXES = Object.freeze([
   ...TOOL_CAPTURE_PAIRS.map(({ open }) => open),
+  ...IGNORED_WRAPPER_OPEN_TAGS,
   ...ORPHAN_WRAPPER_CLOSE_TAGS
 ]);
 
@@ -29,6 +43,20 @@ function findPartialToolTagStart(text) {
   return TOOL_TAG_PREFIXES.some((tag) => tag.startsWith(tail)) ? lastIndex : -1;
 }
 
+function findBoundedTagIndex(lower, tag, offset) {
+  let index = lower.indexOf(tag, offset);
+
+  while (index >= 0) {
+    const next = lower[index + tag.length] ?? "";
+    if (!next || next === ">" || next === "/" || /\s/.test(next)) {
+      return index;
+    }
+    index = lower.indexOf(tag, index + tag.length);
+  }
+
+  return -1;
+}
+
 function findToolSegmentStart(state, text) {
   const lower = text.toLowerCase();
   let offset = 0;
@@ -38,7 +66,7 @@ function findToolSegmentStart(state, text) {
     let matchedOpen = "";
 
     for (const { open } of TOOL_CAPTURE_PAIRS) {
-      const index = lower.indexOf(open, offset);
+      const index = findBoundedTagIndex(lower, open, offset);
       if (index >= 0 && (bestIndex === -1 || index < bestIndex)) {
         bestIndex = index;
         matchedOpen = open;
@@ -59,7 +87,7 @@ function findToolSegmentStart(state, text) {
   return -1;
 }
 
-function findOrphanWrapperCloseStart(state, text) {
+function findProtocolWrapperStart(state, text, tags) {
   const lower = text.toLowerCase();
   let offset = 0;
 
@@ -67,8 +95,8 @@ function findOrphanWrapperCloseStart(state, text) {
     let bestIndex = -1;
     let matchedTag = "";
 
-    for (const tag of ORPHAN_WRAPPER_CLOSE_TAGS) {
-      const index = lower.indexOf(tag, offset);
+    for (const tag of tags) {
+      const index = findBoundedTagIndex(lower, tag, offset);
       if (index >= 0 && (bestIndex === -1 || index < bestIndex)) {
         bestIndex = index;
         matchedTag = tag;
@@ -89,6 +117,14 @@ function findOrphanWrapperCloseStart(state, text) {
   return -1;
 }
 
+function findIgnoredWrapperOpenStart(state, text) {
+  return findProtocolWrapperStart(state, text, IGNORED_WRAPPER_OPEN_TAGS);
+}
+
+function findOrphanWrapperCloseStart(state, text) {
+  return findProtocolWrapperStart(state, text, ORPHAN_WRAPPER_CLOSE_TAGS);
+}
+
 function splitSafeContent(state, text) {
   const partialStart = findPartialToolTagStart(text);
   if (partialStart < 0 || isInsideCodeFence(state, text.slice(0, partialStart))) {
@@ -102,7 +138,7 @@ function consumeCapturedToolBlock(captured, allowedToolNames) {
   const lower = captured.toLowerCase();
 
   for (const pair of TOOL_CAPTURE_PAIRS) {
-    const openIndex = lower.indexOf(pair.open);
+    const openIndex = findBoundedTagIndex(lower, pair.open, 0);
     if (openIndex < 0) {
       continue;
     }
@@ -131,6 +167,17 @@ function pushTextEvent(state, events, text) {
 
   state.emittedText += text;
   events.push({ type: "text", text });
+}
+
+function consumeWrapperTag(state, events, start) {
+  pushTextEvent(state, events, state.pending.slice(0, start));
+  const end = state.pending.indexOf(">", start);
+  if (end < 0) {
+    state.pending = state.pending.slice(start);
+    return false;
+  }
+  state.pending = state.pending.slice(end + 1);
+  return true;
 }
 
 export function createToolSieve(allowedToolNames = []) {
@@ -172,15 +219,15 @@ export function createToolSieve(allowedToolNames = []) {
       }
 
       const toolStart = findToolSegmentStart(state, state.pending);
+      const ignoredOpenStart = findIgnoredWrapperOpenStart(state, state.pending);
       const orphanCloseStart = findOrphanWrapperCloseStart(state, state.pending);
-      if (orphanCloseStart >= 0 && (toolStart < 0 || orphanCloseStart < toolStart)) {
-        pushTextEvent(state, events, state.pending.slice(0, orphanCloseStart));
-        const closeEnd = state.pending.indexOf(">", orphanCloseStart);
-        if (closeEnd < 0) {
-          state.pending = state.pending.slice(orphanCloseStart);
+      const wrapperStarts = [ignoredOpenStart, orphanCloseStart].filter((index) => index >= 0);
+      const wrapperStart = wrapperStarts.length ? Math.min(...wrapperStarts) : -1;
+
+      if (wrapperStart >= 0 && (toolStart < 0 || wrapperStart <= toolStart)) {
+        if (!consumeWrapperTag(state, events, wrapperStart)) {
           break;
         }
-        state.pending = state.pending.slice(closeEnd + 1);
         continue;
       }
 
@@ -217,11 +264,14 @@ export function createToolSieve(allowedToolNames = []) {
         }
       }
 
+      const ignoredOpen = findIgnoredWrapperOpenStart(state, state.pending);
       const pendingClose = findOrphanWrapperCloseStart(state, state.pending);
-      if (pendingClose < 0 && findPartialToolTagStart(state.pending) < 0) {
+      const wrapperStarts = [ignoredOpen, pendingClose].filter((index) => index >= 0);
+      const wrapperStart = wrapperStarts.length ? Math.min(...wrapperStarts) : -1;
+      if (wrapperStart < 0 && findPartialToolTagStart(state.pending) < 0) {
         pushTextEvent(state, events, state.pending);
-      } else if (pendingClose > 0) {
-        pushTextEvent(state, events, state.pending.slice(0, pendingClose));
+      } else if (wrapperStart > 0) {
+        pushTextEvent(state, events, state.pending.slice(0, wrapperStart));
       }
 
       state.capture = "";
