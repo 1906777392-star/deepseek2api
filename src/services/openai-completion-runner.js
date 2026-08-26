@@ -3,8 +3,8 @@ import { acquireChatSession, releaseChatSession } from "./chat-session-service.j
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
-function startCompletion({ account, requestOptions, sessionId }) {
-  return proxyDeepseekRequest({
+async function startCompletion({ account, requestOptions, sessionId }) {
+  const result = await proxyDeepseekRequest({
     account,
     method: "POST",
     path: "/chat/completion",
@@ -23,6 +23,21 @@ function startCompletion({ account, requestOptions, sessionId }) {
     ),
     headers: { "content-type": "application/json" }
   });
+
+  const contentType = result.response.headers.get("content-type") ?? "";
+  if (!result.response.ok || !contentType.includes("text/event-stream")) {
+    const raw = await result.response.text();
+    let message = raw.slice(0, 500) || `HTTP ${result.response.status}`;
+    try {
+      const payload = JSON.parse(raw);
+      message = payload?.data?.biz_msg || payload?.msg || payload?.error?.message || message;
+    } catch {
+      // Keep the bounded raw response as the diagnostic message.
+    }
+    throw new Error(`DeepSeek completion failed: ${message}`);
+  }
+
+  return result;
 }
 
 async function consumeCompletionStream(stream, onDelta) {
@@ -59,13 +74,17 @@ async function prepareRequestOptions({ account, requestOptions, sessionId }) {
     sessionId
   });
 
+  if (!refFileIds.length) {
+    throw new Error("DeepSeek image upload produced no readable vision files");
+  }
+
   return {
     ...requestOptions,
     refFileIds: [...(requestOptions.refFileIds ?? []), ...refFileIds],
     model: {
       ...requestOptions.model,
       modelType: "vision",
-      thinkingEnabled: requestOptions.model.thinkingEnabled,
+      thinkingEnabled: false,
       searchEnabled: false
     }
   };
@@ -99,6 +118,10 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
         }
       });
 
+      if (!content.trim() && !reasoningContent.trim()) {
+        throw new Error("DeepSeek returned an empty completion");
+      }
+
       return { content, reasoningContent, searchResults };
     }
   });
@@ -123,13 +146,21 @@ export async function streamCompletionContent({
 
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
-      return consumeCompletionStream(response.body, (delta) => {
+      let sawOutput = false;
+      const result = await consumeCompletionStream(response.body, (delta) => {
+        sawOutput = true;
         if (onDelta) {
           onDelta(delta);
           return;
         }
         onText?.(delta.text, delta.kind);
       });
+
+      if (!sawOutput) {
+        throw new Error("DeepSeek returned an empty completion");
+      }
+
+      return result;
     }
   });
 }
