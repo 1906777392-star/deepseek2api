@@ -168,7 +168,19 @@ export async function streamCompletionContent({
     account,
     deleteAfterFinish,
     onComplete: async (sessionId) => {
+      const hasImages = Boolean(requestOptions.imageInputs?.length);
+      if (hasImages) {
+        onDelta?.({ kind: "thinking", text: "正在读取图片…\n" });
+        onText?.("正在读取图片…\n", "thinking");
+      }
+
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
+
+      if (hasImages && preparedOptions.model.modelType !== "vision") {
+        onDelta?.({ kind: "thinking", text: "图片已读取，正在继续回答。\n" });
+        onText?.("图片已读取，正在继续回答。\n", "thinking");
+      }
+
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
       return consumeCompletionStream(response.body, (delta) => {
         if (onDelta) {
