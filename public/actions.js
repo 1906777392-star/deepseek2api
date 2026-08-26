@@ -63,16 +63,47 @@ function bindWorkspaceActions({
     }
   };
 
+  const accountSubmit = els["account-form"].querySelector("button[type='submit']");
+  const accountCodeLabel = els["account-password"].closest("label")?.querySelector("span");
+  if (accountCodeLabel) {
+    accountCodeLabel.textContent = "短信验证码";
+  }
+  els["account-password"].type = "text";
+  els["account-password"].inputMode = "numeric";
+  els["account-password"].autocomplete = "one-time-code";
+  els["account-password"].maxLength = 6;
+  els["account-password"].placeholder = "首次留空，先发送验证码";
+  if (accountSubmit) {
+    accountSubmit.textContent = "发送验证码";
+  }
+
   els["account-form"].onsubmit = async (event) => {
     event.preventDefault();
-    setStatus(els["account-status"], "绑定中...");
+    const smsCode = els["account-password"].value.trim();
+    setStatus(els["account-status"], smsCode ? "验证并绑定中..." : "发送验证码中...");
 
     try {
-      await onAddAccount({
-        password: els["account-password"].value,
+      const result = await onAddAccount({
+        password: smsCode,
         username: els["account-username"].value.trim()
       });
+
+      if (result?.sent) {
+        els["account-password"].value = "";
+        els["account-password"].placeholder = "输入短信中的 6 位验证码";
+        if (accountSubmit) {
+          accountSubmit.textContent = "验证并绑定";
+        }
+        setStatus(els["account-status"], "验证码已发送。收到短信后填入 6 位验证码，再点“验证并绑定”。");
+        return;
+      }
+
       els["account-username"].value = "";
+      els["account-password"].value = "";
+      els["account-password"].placeholder = "首次留空，先发送验证码";
+      if (accountSubmit) {
+        accountSubmit.textContent = "发送验证码";
+      }
       setStatus(els["account-status"], "已绑定。");
     } catch (error) {
       setStatus(els["account-status"], error.message);
