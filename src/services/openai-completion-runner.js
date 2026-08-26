@@ -15,19 +15,17 @@ async function startCompletion({ account, requestOptions, sessionId }) {
     account,
     method: "POST",
     path: "/chat/completion",
-    body: Buffer.from(
-      JSON.stringify({
-        chat_session_id: sessionId,
-        parent_message_id: null,
-        model_type: requestOptions.model.modelType,
-        prompt: requestOptions.prompt,
-        ref_file_ids: requestOptions.refFileIds ?? [],
-        thinking_enabled: requestOptions.model.thinkingEnabled,
-        search_enabled: requestOptions.model.searchEnabled,
-        action: null,
-        preempt: false
-      })
-    ),
+    body: Buffer.from(JSON.stringify({
+      chat_session_id: sessionId,
+      parent_message_id: null,
+      model_type: requestOptions.model.modelType,
+      prompt: requestOptions.prompt,
+      ref_file_ids: requestOptions.refFileIds ?? [],
+      thinking_enabled: requestOptions.model.thinkingEnabled,
+      search_enabled: requestOptions.model.searchEnabled,
+      action: null,
+      preempt: false
+    })),
     headers: { "content-type": "application/json" }
   });
 
@@ -38,18 +36,14 @@ async function startCompletion({ account, requestOptions, sessionId }) {
     try {
       const payload = JSON.parse(raw);
       message = payload?.data?.biz_msg || payload?.msg || payload?.error?.message || message;
-    } catch {
-      // Keep the bounded raw response as the diagnostic message.
-    }
+    } catch {}
     throw new Error(`DeepSeek completion failed: ${message}`);
   }
-
   return result;
 }
 
 async function consumeCompletionStream(stream, onDelta) {
   if (!stream) return { searchResults: [], sawOutput: false };
-
   const decoder = new TextDecoder();
   const deltaDecoder = createDeepseekDeltaDecoder();
   let sawOutput = false;
@@ -62,11 +56,7 @@ async function consumeCompletionStream(stream, onDelta) {
       onDelta(delta);
     });
   });
-
-  for await (const chunk of stream) {
-    parser.push(decoder.decode(chunk, { stream: true }));
-  }
-
+  for await (const chunk of stream) parser.push(decoder.decode(chunk, { stream: true }));
   parser.flush();
   return { searchResults: deltaDecoder.getSearchResults(), sawOutput };
 }
@@ -75,26 +65,12 @@ async function prepareRequestOptions({ account, requestOptions, sessionId }) {
   if (!requestOptions.imageInputs?.length) {
     return { ...requestOptions, refFileIds: requestOptions.refFileIds ?? [] };
   }
-
-  const refFileIds = await uploadOpenAiVisionFiles({
-    account,
-    imageInputs: requestOptions.imageInputs,
-    sessionId
-  });
-
-  if (!refFileIds.length) {
-    throw new Error("DeepSeek image upload produced no readable vision files");
-  }
-
+  const refFileIds = await uploadOpenAiVisionFiles({ account, imageInputs: requestOptions.imageInputs, sessionId });
+  if (!refFileIds.length) throw new Error("DeepSeek image upload produced no readable vision files");
   return {
     ...requestOptions,
     refFileIds: [...(requestOptions.refFileIds ?? []), ...refFileIds],
-    model: {
-      ...requestOptions.model,
-      modelType: "vision",
-      thinkingEnabled: false,
-      searchEnabled: false
-    }
+    model: { ...requestOptions.model, modelType: "vision", thinkingEnabled: false, searchEnabled: false }
   };
 }
 
@@ -107,13 +83,11 @@ async function withCompletionSession({ account, disposable, onComplete }) {
   }
 }
 
-async function runCompletionAttempt({ account, requestOptions, onDelta }) {
+async function runCompletionAttempt({ account, disposable = false, requestOptions, onDelta }) {
   const hasImages = Boolean(requestOptions.imageInputs?.length);
   return withCompletionSession({
     account,
-    // Uploaded vision files are scoped to their chat session. Reusing a pooled
-    // text session can make DeepSeek accept the request but return an empty SSE.
-    disposable: hasImages,
+    disposable: hasImages || disposable,
     onComplete: async (sessionId) => {
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
@@ -125,10 +99,8 @@ async function runCompletionAttempt({ account, requestOptions, onDelta }) {
 }
 
 async function runWithVisionRetry(options) {
-  const hasImages = Boolean(options.requestOptions.imageInputs?.length);
-  const attempts = hasImages ? 2 : 1;
+  const attempts = options.requestOptions.imageInputs?.length ? 2 : 1;
   let lastError;
-
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       return await runCompletionAttempt(options);
@@ -137,7 +109,6 @@ async function runWithVisionRetry(options) {
       if (!(error instanceof EmptyCompletionError) || attempt + 1 >= attempts) throw error;
     }
   }
-
   throw lastError;
 }
 
@@ -146,42 +117,29 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
   let reasoningContent = "";
   const result = await runWithVisionRetry({
     account,
+    disposable: deleteAfterFinish,
     requestOptions,
     onDelta: (delta) => {
       if (delta.kind === "thinking") reasoningContent += delta.text;
       else content += delta.text;
     }
   });
-
-  // Text requests retain the old delete-after-finish behaviour. Vision requests
-  // are always disposable because their uploaded files belong to that session.
-  void deleteAfterFinish;
   return { content, reasoningContent, searchResults: result.searchResults };
 }
 
-export async function streamCompletionContent({
-  account,
-  deleteAfterFinish = false,
-  onDelta,
-  onText,
-  requestOptions
-}) {
+export async function streamCompletionContent({ account, deleteAfterFinish = false, onDelta, onText, requestOptions }) {
   const hasImages = Boolean(requestOptions.imageInputs?.length);
   if (hasImages) {
     onDelta?.({ kind: "thinking", text: "正在读取图片…\n" });
     onText?.("正在读取图片…\n", "thinking");
   }
-
-  void deleteAfterFinish;
   return runWithVisionRetry({
     account,
+    disposable: deleteAfterFinish,
     requestOptions,
     onDelta: (delta) => {
-      if (onDelta) {
-        onDelta(delta);
-        return;
-      }
-      onText?.(delta.text, delta.kind);
+      if (onDelta) onDelta(delta);
+      else onText?.(delta.text, delta.kind);
     }
   });
 }
