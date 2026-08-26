@@ -12,6 +12,7 @@ import {
   resolveAccountLabel
 } from "../services/account-service.js";
 import {
+  bindDeepseekBearerToken,
   loginToDeepseek,
   loginToDeepseekWithSms,
   sendDeepseekSmsCode
@@ -55,12 +56,14 @@ async function handleAccountCreation(request, response, session) {
   const deviceId = resolveDeepseekDeviceId(body.deviceId);
 
   try {
-    const loginResult = body.smsCode
-      ? await loginToDeepseekWithSms({ mobile: body.username, code: body.smsCode, deviceId })
-      : await loginToDeepseek({ loginValue: body.username, password: body.password, deviceId });
+    const loginResult = body.token
+      ? await bindDeepseekBearerToken({ token: body.token, deviceId, label: body.username })
+      : body.smsCode
+        ? await loginToDeepseekWithSms({ mobile: body.username, code: body.smsCode, deviceId })
+        : await loginToDeepseek({ loginValue: body.username, password: body.password, deviceId });
     const account = saveDeepseekAccountForOwner({
       ownerId: session.ownerId,
-      loginValue: body.username,
+      loginValue: body.username || "DeepSeek",
       deviceId,
       loginResult
     });

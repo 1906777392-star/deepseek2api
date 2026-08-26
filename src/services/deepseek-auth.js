@@ -56,6 +56,25 @@ function assertSmsCode(value) {
   return code;
 }
 
+function normalizeBearerToken(value) {
+  let token = String(value ?? "").trim().replace(/^Bearer\s+/i, "");
+  if (token.startsWith("{") && token.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(token);
+      if (typeof parsed?.value === "string") {
+        token = parsed.value.trim();
+      }
+    } catch {
+      // Keep the original value so DeepSeek can return the authoritative error.
+    }
+  }
+
+  if (!token) {
+    throw new Error("请粘贴 DeepSeek Bearer token");
+  }
+  return token;
+}
+
 function resolveRequestPath(path) {
   return /^\/api\/v\d+(?:\/|$)/.test(path)
     ? path
@@ -91,13 +110,7 @@ function resolveDeepseekError(result, status) {
     : `DeepSeek 请求失败（业务码 ${resolvedCode}，HTTP ${status}）`;
 }
 
-async function requestDeepseekJson(path, body) {
-  const response = await fetch(`${config.deepseekBaseUrl}${resolveRequestPath(path)}`, {
-    method: "POST",
-    headers: createBaseHeaders("", { "content-type": "application/json" }),
-    body: JSON.stringify(body)
-  });
-
+async function parseDeepseekResponse(response) {
   const responseText = await response.text();
   let result;
   try {
@@ -120,6 +133,50 @@ async function requestDeepseekJson(path, body) {
   return result;
 }
 
+async function requestDeepseekJson(path, body) {
+  const response = await fetch(`${config.deepseekBaseUrl}${resolveRequestPath(path)}`, {
+    method: "POST",
+    headers: createBaseHeaders("", { "content-type": "application/json" }),
+    body: JSON.stringify(body)
+  });
+  return parseDeepseekResponse(response);
+}
+
+export async function bindDeepseekBearerToken({ token, deviceId, label = "" }) {
+  const normalizedToken = normalizeBearerToken(token);
+  const response = await fetch(
+    `${config.deepseekBaseUrl}${resolveDeepseekApiPath("/users/current")}`,
+    {
+      method: "GET",
+      headers: createBaseHeaders(normalizedToken)
+    }
+  );
+  const result = await parseDeepseekResponse(response);
+  const bizData = result?.data?.biz_data ?? result?.data ?? {};
+  const profile = bizData?.user ?? bizData;
+  const userId = profile?.id ?? profile?.user_id ?? profile?.sso_id;
+
+  if (!userId) {
+    throw new Error("Token 校验成功，但 DeepSeek 未返回账号 ID");
+  }
+
+  return {
+    data: {
+      biz_code: 0,
+      biz_data: {
+        user: {
+          ...profile,
+          id: String(userId),
+          token: normalizedToken,
+          email: profile?.email ?? "",
+          mobile_number: profile?.mobile_number ?? profile?.mobile ?? "",
+          display_name: label || profile?.display_name || profile?.name || ""
+        }
+      }
+    }
+  };
+}
+
 export async function loginToDeepseek({ loginValue, password, deviceId }) {
   if (!isEmail(String(loginValue ?? ""))) {
     return loginToDeepseekWithSms({ mobile: loginValue, code: password, deviceId });
@@ -131,14 +188,11 @@ export async function loginToDeepseek({ loginValue, password, deviceId }) {
 export async function sendDeepseekSmsCode({ mobile, deviceId }) {
   const normalizedMobile = assertChineseMobile(mobile);
   return requestDeepseekJson("/api/v0/users/create_sms_verification_code", {
-    mobile: normalizedMobile,
-    area_code: "+86",
-    scenario: "login",
-    device_id: deviceId,
-    locale: "zh-CN",
+    mobile_number: normalizedMobile,
+    locale: "zh_CN",
     turnstile_token: "",
-    shumei_verification: "",
-    hcaptcha_token: ""
+    shumei_verification: { region: "CN", rid: "" },
+    device_id: deviceId
   });
 }
 
