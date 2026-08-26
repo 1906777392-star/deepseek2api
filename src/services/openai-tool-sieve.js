@@ -176,7 +176,7 @@ function consumeWrapperTag(state, events, start) {
     state.pending = state.pending.slice(start);
     return false;
   }
-  state.pending = state.pending.slice(end + 1);
+  state.pending = state.pending.slice(end + 1).replace(/^\s+/, "");
   return true;
 }
 
