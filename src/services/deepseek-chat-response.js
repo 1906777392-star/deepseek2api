@@ -103,20 +103,20 @@ export async function collectDeepseekChatResponse({ account, body }) {
   let readyPayload = null;
   let sections = [];
   const parser = createSseParser(({ data, event }) => {
-    if (!data) {
-      return;
-    }
+    if (!data) return;
 
     if (event === "ready") {
       readyPayload = JSON.parse(data);
       return;
     }
 
-    if (event !== "message") {
-      return;
-    }
+    if (event !== "message") return;
 
-    sections = appendSection(sections, deltaDecoder.consume(data));
+    const decoded = deltaDecoder.consume(data);
+    const deltas = Array.isArray(decoded) ? decoded : (decoded ? [decoded] : []);
+    deltas.forEach((delta) => {
+      sections = appendSection(sections, delta);
+    });
   });
 
   for await (const chunk of response.body) {
