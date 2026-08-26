@@ -82,26 +82,22 @@ function redactSensitiveReasoning(value) {
 }
 
 function createStreamingReasoningRedactor(onSafeText) {
+  const holdBackChars = 48;
   let pending = "";
 
-  function emitCompleteUnits() {
-    let cut = 0;
-    const boundary = /[\n。！？!?；;]/g;
-    for (const match of pending.matchAll(boundary)) {
-      cut = (match.index ?? 0) + match[0].length;
-    }
-
-    if (cut <= 0) return;
-    const complete = pending.slice(0, cut);
+  function emitAvailable() {
+    if (pending.length <= holdBackChars) return;
+    const cut = pending.length - holdBackChars;
+    const available = pending.slice(0, cut);
     pending = pending.slice(cut);
-    const safe = redactSensitiveReasoning(complete);
+    const safe = redactSensitiveReasoning(available);
     if (safe) onSafeText(safe);
   }
 
   return Object.freeze({
     push(text) {
       pending += String(text ?? "");
-      emitCompleteUnits();
+      emitAvailable();
     },
     flush() {
       if (!pending) return;
@@ -172,6 +168,15 @@ function writeSseChunk(response, payload) {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
+function writeSseError(response, error) {
+  response.write(`data: ${JSON.stringify({
+    error: {
+      message: error?.message || "DeepSeek request failed",
+      type: "server_error"
+    }
+  })}\n\n`);
+}
+
 export async function collectOpenAiResponse({ account, body, deleteAfterFinish = false, toolCallsEnabled = false }) {
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
   const { content, reasoningContent, searchResults } = await collectCompletionContent({
@@ -237,38 +242,43 @@ export async function streamOpenAiResponse(options) {
     });
   };
 
-  const { searchResults } = await streamCompletionContent({
-    account,
-    deleteAfterFinish,
-    onDelta: (delta) => {
-      if (delta.kind === "thinking") {
-        reasoningRedactor.push(delta.text);
-      } else {
-        emitResponseText(delta.text);
-      }
-    },
-    requestOptions
-  });
-
-  reasoningRedactor.flush();
-  emitResponseText(formatSearchSources(searchResults));
-
-  if (toolSieve) {
-    toolSieve.flush().forEach((event) => {
-      if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
-      else if (event.text) writeSseChunk(response, buildChunkPayload(
-        completionId,
-        requestOptions.model.id,
-        { content: event.text }
-      ));
+  try {
+    const { searchResults } = await streamCompletionContent({
+      account,
+      deleteAfterFinish,
+      onDelta: (delta) => {
+        if (delta.kind === "thinking") {
+          reasoningRedactor.push(delta.text);
+        } else {
+          emitResponseText(delta.text);
+        }
+      },
+      requestOptions
     });
+
+    reasoningRedactor.flush();
+    emitResponseText(formatSearchSources(searchResults));
+
+    if (toolSieve) {
+      toolSieve.flush().forEach((event) => {
+        if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
+        else if (event.text) writeSseChunk(response, buildChunkPayload(
+          completionId,
+          requestOptions.model.id,
+          { content: event.text }
+        ));
+      });
+    }
+
+    writeSseChunk(response, buildChunkPayload(
+      completionId,
+      requestOptions.model.id,
+      {},
+      sawToolCall ? "tool_calls" : "stop"
+    ));
+  } catch (error) {
+    writeSseError(response, error);
   }
 
-  writeSseChunk(response, buildChunkPayload(
-    completionId,
-    requestOptions.model.id,
-    {},
-    sawToolCall ? "tool_calls" : "stop"
-  ));
   response.end("data: [DONE]\n\n");
 }
