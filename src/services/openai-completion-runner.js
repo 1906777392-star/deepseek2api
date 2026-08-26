@@ -3,6 +3,10 @@ import { createChatSession, deleteChatSession } from "./chat-session-service.js"
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
+function resolveCompletionModelType(requestOptions) {
+  return requestOptions.imageInputs?.length ? "vision" : requestOptions.model.modelType;
+}
+
 function startCompletion({ account, requestOptions, sessionId }) {
   return proxyDeepseekRequest({
     account,
@@ -12,7 +16,7 @@ function startCompletion({ account, requestOptions, sessionId }) {
       JSON.stringify({
         chat_session_id: sessionId,
         parent_message_id: null,
-        model_type: requestOptions.model.modelType,
+        model_type: resolveCompletionModelType(requestOptions),
         prompt: requestOptions.prompt,
         ref_file_ids: requestOptions.refFileIds ?? [],
         thinking_enabled: requestOptions.model.thinkingEnabled,
