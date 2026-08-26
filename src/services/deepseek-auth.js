@@ -62,6 +62,20 @@ function resolveRequestPath(path) {
     : resolveDeepseekApiPath(path);
 }
 
+function resolveDeepseekError(result, status) {
+  const message = result?.data?.biz_msg || result?.msg;
+  if (message) {
+    return String(message);
+  }
+
+  const bizCode = result?.data?.biz_code;
+  const code = result?.code;
+  const resolvedCode = bizCode ?? code;
+  return resolvedCode === undefined
+    ? `DeepSeek 请求失败（HTTP ${status}）`
+    : `DeepSeek 请求失败（业务码 ${resolvedCode}，HTTP ${status}）`;
+}
+
 async function requestDeepseekJson(path, body) {
   const response = await fetch(`${config.deepseekBaseUrl}${resolveRequestPath(path)}`, {
     method: "POST",
@@ -81,10 +95,10 @@ async function requestDeepseekJson(path, body) {
     throw new Error(`DeepSeek 请求失败（HTTP ${response.status}）`);
   }
 
-  const bizCode = result.data?.biz_code;
-  const code = result.code;
+  const bizCode = result?.data?.biz_code;
+  const code = result?.code;
   if (!response.ok || (bizCode !== undefined && bizCode !== 0) || (code !== undefined && code !== 0)) {
-    throw new Error(result.msg || result.data?.biz_msg || `DeepSeek 请求失败（HTTP ${response.status}）`);
+    throw new Error(resolveDeepseekError(result, response.status));
   }
 
   return result;
@@ -100,19 +114,24 @@ export async function loginToDeepseek({ loginValue, password, deviceId }) {
 
 export async function sendDeepseekSmsCode({ mobile, deviceId }) {
   const normalizedMobile = assertChineseMobile(mobile);
-  return requestDeepseekJson("/api/v1/phone/send_sms_code", {
-    phone_number: normalizedMobile,
-    country_code: "86"
+  return requestDeepseekJson("/api/v0/users/create_sms_verification_code", {
+    locale: "zh_CN",
+    device_id: deviceId,
+    scenario: "mobile_login",
+    mobile_number: normalizedMobile,
+    area_code: "+86"
   });
 }
 
 export async function loginToDeepseekWithSms({ mobile, code, deviceId }) {
   const normalizedMobile = assertChineseMobile(mobile);
   const normalizedCode = assertSmsCode(code);
-  return requestDeepseekJson("/api/v1/phone/login", {
-    phone_number: normalizedMobile,
-    sms_code: normalizedCode,
-    country_code: "86"
+  return requestDeepseekJson("/api/v0/users/login_by_mobile_sms", {
+    mobile_number: normalizedMobile,
+    area_code: "+86",
+    sms_verification_code: normalizedCode,
+    device_id: deviceId,
+    os: "web"
   });
 }
 
