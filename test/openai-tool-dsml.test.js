@@ -79,6 +79,38 @@ test("malformed unfinished DSML calls fail closed instead of leaking arguments",
   assert.deepEqual(parsed.toolCalls, []);
 });
 
+test("fuzzy DSML wrapper residue is removed after a successful call", () => {
+  const parsed = extractToolAwareOutput(
+    '已经看见。<| |DSML.| |tool_calls>',
+    ["view_image"]
+  );
+
+  assert.equal(parsed.content, "已经看见。");
+  assert.deepEqual(parsed.toolCalls, []);
+});
+
+test("duplicated fuzzy wrappers and an orphan tool name fail closed", () => {
+  const parsed = extractToolAwareOutput(
+    '<| |DSML.| |tool_calls>\n<| |DSML.| |tool_calls>\n<tool_name>use_style</tool_name>',
+    ["use_style"]
+  );
+
+  assert.equal(parsed.content, "");
+  assert.deepEqual(parsed.toolCalls, []);
+});
+
+test("a fuzzy DSML tag split across stream chunks is held and removed", () => {
+  const sieve = createToolSieve(["view_image"]);
+  const events = [
+    ...sieve.push("正常文字<| |DSM"),
+    ...sieve.push("L.| |tool_calls>"),
+    ...sieve.flush()
+  ];
+  const text = events.filter((event) => event.type === "text").map((event) => event.text).join("");
+
+  assert.equal(text, "正常文字");
+});
+
 test("DSML-looking text inside a fenced code block remains ordinary text", () => {
   const source = '```xml\n<|DSML|invoke name="draw"><parameters>{}</parameters></invoke>\n```';
   const parsed = extractToolAwareOutput(source, ["draw"]);

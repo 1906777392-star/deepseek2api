@@ -18,7 +18,12 @@ const TOOL_CAPTURE_PAIRS = Object.freeze([
   { open: "<parameters", close: "</tool_call>" },
   { open: "<arguments", close: "</tool_call>" },
   { open: "<input", close: "</tool_call>" },
-  { open: "<![cdata[", close: "</tool_call>" }
+  { open: "<![cdata[", close: "</tool_call>" },
+  // DeepSeek sometimes emits only the inner name field after malformed DSML
+  // wrappers. It is not executable without a complete call, so hide it rather
+  // than exposing protocol markup to the user.
+  { open: "<tool_name", close: "</tool_call>" },
+  { open: "<function_name", close: "</function_call>" }
 ]);
 const IGNORED_WRAPPER_OPEN_TAGS = Object.freeze([
   "<|dsml|tool_calls",
@@ -35,6 +40,16 @@ const TOOL_TAG_PREFIXES = Object.freeze([
   ...IGNORED_WRAPPER_OPEN_TAGS,
   ...ORPHAN_WRAPPER_CLOSE_TAGS
 ]);
+const FUZZY_DSML_TAG_PATTERN = /<(\s*\/\s*)?(?:[|｜]\s*){1,3}dsml\s*[.·]?\s*(?:[|｜]\s*){1,3}(tool_calls|function_calls|tool_call|function_call|invoke|tool_use)\b([^>]*)>/gi;
+
+function normalizeMalformedDsmlTags(text) {
+  return String(text ?? "").replace(
+    FUZZY_DSML_TAG_PATTERN,
+    (_match, closing, rawName, attrs) => closing
+      ? `</${String(rawName).toLowerCase()}>`
+      : `<${String(rawName).toLowerCase()}${attrs ?? ""}>`
+  );
+}
 
 function isInsideCodeFence(state, prefix) {
   const combined = `${state.emittedText}${prefix}`;
@@ -48,7 +63,24 @@ function findPartialToolTagStart(text) {
   }
 
   const tail = text.slice(lastIndex).toLowerCase();
-  return TOOL_TAG_PREFIXES.some((tag) => tag.startsWith(tail)) ? lastIndex : -1;
+  if (TOOL_TAG_PREFIXES.some((tag) => tag.startsWith(tail))) {
+    return lastIndex;
+  }
+
+  // Hold split fuzzy DSML tags such as "<| |DSM" until the next chunk. The
+  // model occasionally inserts spaces, duplicate pipes and a dot around DSML.
+  const compact = tail.replace(/[\s.·|｜]/g, "");
+  const fuzzyPrefixes = [
+    "<dsmltool_calls",
+    "<dsmlfunction_calls",
+    "<dsmltool_call",
+    "<dsmlfunction_call",
+    "<dsmlinvoke",
+    "<dsmltool_use",
+    "</dsmltool_calls",
+    "</dsmlfunction_calls"
+  ];
+  return fuzzyPrefixes.some((tag) => tag.startsWith(compact)) ? lastIndex : -1;
 }
 
 function findBoundedTagIndex(lower, tag, offset) {
@@ -201,6 +233,8 @@ export function createToolSieve(allowedToolNames = []) {
     const events = [];
 
     while (true) {
+      state.pending = normalizeMalformedDsmlTags(state.pending);
+
       if (state.capturing) {
         if (state.pending) {
           state.capture += state.pending;
@@ -272,6 +306,7 @@ export function createToolSieve(allowedToolNames = []) {
         }
       }
 
+      state.pending = normalizeMalformedDsmlTags(state.pending);
       const ignoredOpen = findIgnoredWrapperOpenStart(state, state.pending);
       const pendingClose = findOrphanWrapperCloseStart(state, state.pending);
       const wrapperStarts = [ignoredOpen, pendingClose].filter((index) => index >= 0);
