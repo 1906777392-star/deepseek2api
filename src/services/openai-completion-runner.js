@@ -3,9 +3,6 @@ import { createChatSession, deleteChatSession } from "./chat-session-service.js"
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
-const THINK_OPEN_TAG = "<think>";
-const THINK_CLOSE_TAG = "</think>";
-
 function startCompletion({ account, requestOptions, sessionId }) {
   return proxyDeepseekRequest({
     account,
@@ -45,51 +42,17 @@ async function prepareRequestOptions({ account, requestOptions, sessionId }) {
   };
 }
 
-function createThinkingTagger() {
-  let currentKind = null;
-
-  return {
-    flush() {
-      if (currentKind !== "thinking") {
-        return "";
-      }
-
-      currentKind = "response";
-      return THINK_CLOSE_TAG;
-    },
-    push(delta) {
-      if (!delta?.text) {
-        return "";
-      }
-
-      let prefix = "";
-      if (delta.kind !== currentKind) {
-        if (currentKind === "thinking") {
-          prefix += THINK_CLOSE_TAG;
-        }
-        if (delta.kind === "thinking") {
-          prefix += THINK_OPEN_TAG;
-        }
-        currentKind = delta.kind;
-      }
-
-      return prefix + delta.text;
-    }
-  };
-}
-
-async function consumeTaggedStream(stream, onText) {
+async function consumeCompletionStream(stream, onDelta) {
   if (!stream) {
     return;
   }
 
   const decoder = new TextDecoder();
   const deltaDecoder = createDeepseekDeltaDecoder();
-  const tagger = createThinkingTagger();
   const parser = createSseParser(({ data }) => {
-    const text = tagger.push(deltaDecoder.consume(data));
-    if (text) {
-      onText(text);
+    const delta = deltaDecoder.consume(data);
+    if (delta?.text) {
+      onDelta(delta);
     }
   });
 
@@ -98,10 +61,6 @@ async function consumeTaggedStream(stream, onText) {
   }
 
   parser.flush();
-  const suffix = tagger.flush();
-  if (suffix) {
-    onText(suffix);
-  }
 }
 
 async function withCompletionSession({ account, deleteAfterFinish, onComplete }) {
@@ -124,24 +83,41 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
       let content = "";
+      let reasoningContent = "";
 
-      await consumeTaggedStream(response.body, (text) => {
-        content += text;
+      await consumeCompletionStream(response.body, (delta) => {
+        if (delta.kind === "thinking") {
+          reasoningContent += delta.text;
+        } else {
+          content += delta.text;
+        }
       });
 
-      return { content };
+      return { content, reasoningContent };
     }
   });
 }
 
-export async function streamCompletionContent({ account, deleteAfterFinish = false, onText, requestOptions }) {
+export async function streamCompletionContent({
+  account,
+  deleteAfterFinish = false,
+  onDelta,
+  onText,
+  requestOptions
+}) {
   return withCompletionSession({
     account,
     deleteAfterFinish,
     onComplete: async (sessionId) => {
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
-      await consumeTaggedStream(response.body, onText);
+      await consumeCompletionStream(response.body, (delta) => {
+        if (onDelta) {
+          onDelta(delta);
+          return;
+        }
+        onText?.(delta.text, delta.kind);
+      });
     }
   });
 }

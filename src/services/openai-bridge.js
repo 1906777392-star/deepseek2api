@@ -74,7 +74,13 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   };
 }
 
-function buildChatCompletionPayload(completionId, requestOptions, content) {
+function withReasoning(message, reasoningContent) {
+  return reasoningContent
+    ? { ...message, reasoning_content: reasoningContent }
+    : message;
+}
+
+function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent) {
   const parsed = requestOptions.toolNames.length
     ? extractToolAwareOutput(content, requestOptions.toolNames)
     : { content, toolCalls: [] };
@@ -91,11 +97,11 @@ function buildChatCompletionPayload(completionId, requestOptions, content) {
         {
           index: 0,
           finish_reason: "tool_calls",
-          message: {
+          message: withReasoning({
             role: "assistant",
             content: parsed.content.length ? parsed.content : null,
             tool_calls: createChatToolCalls(parsed.toolCalls)
-          }
+          }, reasoningContent)
         }
       ]
     };
@@ -110,10 +116,10 @@ function buildChatCompletionPayload(completionId, requestOptions, content) {
       {
         index: 0,
         finish_reason: "stop",
-        message: {
+        message: withReasoning({
           role: "assistant",
           content: parsed.content
-        }
+        }, reasoningContent)
       }
     ]
   };
@@ -144,13 +150,18 @@ export async function collectOpenAiResponse({
   toolCallsEnabled = false
 }) {
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
-  const { content } = await collectCompletionContent({
+  const { content, reasoningContent } = await collectCompletionContent({
     account,
     deleteAfterFinish,
     requestOptions
   });
 
-  return buildChatCompletionPayload(createCompletionId(), requestOptions, content);
+  return buildChatCompletionPayload(
+    createCompletionId(),
+    requestOptions,
+    content,
+    reasoningContent
+  );
 }
 
 export async function streamOpenAiResponse(options) {
@@ -197,34 +208,47 @@ export async function streamOpenAiResponse(options) {
     toolCallIndex += calls.length;
   };
 
-  await streamCompletionContent({
-    account,
-    deleteAfterFinish,
-    onText: (delta) => {
-      if (!toolSieve) {
+  const emitResponseText = (text) => {
+    if (!toolSieve) {
+      writeSseChunk(response, buildChunkPayload(
+        completionId,
+        requestOptions.model.id,
+        { content: text }
+      ));
+      return;
+    }
+
+    const events = toolSieve.push(text);
+    events.forEach((event) => {
+      if (event.type === "tool_calls") {
+        emitToolCalls(event.calls ?? []);
+        return;
+      }
+
+      if (event.text) {
         writeSseChunk(response, buildChunkPayload(
           completionId,
           requestOptions.model.id,
-          { content: delta }
+          { content: event.text }
+        ));
+      }
+    });
+  };
+
+  await streamCompletionContent({
+    account,
+    deleteAfterFinish,
+    onDelta: (delta) => {
+      if (delta.kind === "thinking") {
+        writeSseChunk(response, buildChunkPayload(
+          completionId,
+          requestOptions.model.id,
+          { reasoning_content: delta.text }
         ));
         return;
       }
 
-      const events = toolSieve.push(delta);
-      events.forEach((event) => {
-        if (event.type === "tool_calls") {
-          emitToolCalls(event.calls ?? []);
-          return;
-        }
-
-        if (event.text) {
-          writeSseChunk(response, buildChunkPayload(
-            completionId,
-            requestOptions.model.id,
-            { content: event.text }
-          ));
-        }
-      });
+      emitResponseText(delta.text);
     },
     requestOptions
   });
