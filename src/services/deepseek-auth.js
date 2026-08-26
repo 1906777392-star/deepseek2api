@@ -68,6 +68,10 @@ export async function loginToDeepseek({ loginValue, password, deviceId }) {
 }
 
 export async function refreshAccountToken(account) {
+  if (!account.password) {
+    throw new Error("DeepSeek token 已过期，请在账号管理中重新绑定；服务不会保存你的 DeepSeek 密码");
+  }
+
   const loginResult = await loginToDeepseek({
     loginValue: account.loginValue,
     password: account.password,
@@ -77,6 +81,7 @@ export async function refreshAccountToken(account) {
   const user = loginResult.data.biz_data.user;
   const refreshedAccount = saveAccount({
     ...account,
+    password: undefined,
     token: user.token,
     ssoId: user.id,
     status: "online"
