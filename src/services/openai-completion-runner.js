@@ -1,14 +1,7 @@
 import { createDeepseekDeltaDecoder, createSseParser } from "../utils/deepseek-sse.js";
-import { createChatSession, deleteChatSession } from "./chat-session-service.js";
+import { acquireChatSession, releaseChatSession } from "./chat-session-service.js";
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
-
-const VISION_READING_PROMPT = [
-  "请读取附件图片，并输出一份准确、完整、可供另一个语言模型继续回答的视觉描述。",
-  "优先说明画面主体、文字、界面状态、位置关系和与用户问题相关的细节。",
-  "不要声称看不到图片，不要讨论内部流程。",
-  "用户原始对话如下："
-].join("\n");
 
 function startCompletion({ account, requestOptions, sessionId }) {
   return proxyDeepseekRequest({
@@ -55,7 +48,7 @@ async function consumeCompletionStream(stream, onDelta) {
   return { searchResults: deltaDecoder.getSearchResults() };
 }
 
-async function uploadRequestImages({ account, requestOptions, sessionId }) {
+async function prepareRequestOptions({ account, requestOptions, sessionId }) {
   if (!requestOptions.imageInputs?.length) {
     return { ...requestOptions, refFileIds: requestOptions.refFileIds ?? [] };
   }
@@ -68,69 +61,23 @@ async function uploadRequestImages({ account, requestOptions, sessionId }) {
 
   return {
     ...requestOptions,
-    refFileIds: [...(requestOptions.refFileIds ?? []), ...refFileIds]
-  };
-}
-
-async function readImagesForTextModel({ account, requestOptions, sessionId }) {
-  const uploadedOptions = await uploadRequestImages({ account, requestOptions, sessionId });
-  if (requestOptions.model.modelType === "vision") {
-    return uploadedOptions;
-  }
-
-  const visionOptions = {
-    ...uploadedOptions,
+    refFileIds: [...(requestOptions.refFileIds ?? []), ...refFileIds],
     model: {
-      id: "deepseek-vision",
+      ...requestOptions.model,
       modelType: "vision",
-      thinkingEnabled: false,
+      thinkingEnabled: requestOptions.model.thinkingEnabled,
       searchEnabled: false
-    },
-    prompt: `${VISION_READING_PROMPT}\n\n${requestOptions.prompt}`
+    }
   };
-  const { response } = await startCompletion({ account, requestOptions: visionOptions, sessionId });
-  let visualDescription = "";
-  let visualFallback = "";
-
-  await consumeCompletionStream(response.body, (delta) => {
-    if (delta.kind === "thinking") visualFallback += delta.text;
-    else visualDescription += delta.text;
-  });
-
-  const description = (visualDescription || visualFallback).trim();
-  if (!description) {
-    throw new Error("DeepSeek vision returned an empty result");
-  }
-
-  return {
-    ...requestOptions,
-    imageInputs: [],
-    refFileIds: [],
-    prompt: [
-      requestOptions.prompt,
-      "",
-      "以下是视觉模型对本轮附件的识别结果。把它当作图片内容本身继续回答用户，不要声称无法看图，也不要复述这段说明：",
-      description
-    ].join("\n")
-  };
-}
-
-async function prepareRequestOptions({ account, requestOptions, sessionId }) {
-  if (!requestOptions.imageInputs?.length) {
-    return { ...requestOptions, refFileIds: requestOptions.refFileIds ?? [] };
-  }
-  return readImagesForTextModel({ account, requestOptions, sessionId });
 }
 
 async function withCompletionSession({ account, deleteAfterFinish, onComplete }) {
-  const sessionId = await createChatSession(account);
+  const lease = await acquireChatSession(account, deleteAfterFinish);
 
   try {
-    return await onComplete(sessionId);
+    return await onComplete(lease.id);
   } finally {
-    if (deleteAfterFinish) {
-      await deleteChatSession(account, sessionId);
-    }
+    await releaseChatSession(account, lease);
   }
 }
 
@@ -175,12 +122,6 @@ export async function streamCompletionContent({
       }
 
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
-
-      if (hasImages && preparedOptions.model.modelType !== "vision") {
-        onDelta?.({ kind: "thinking", text: "图片已读取，正在继续回答。\n" });
-        onText?.("图片已读取，正在继续回答。\n", "thinking");
-      }
-
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
       return consumeCompletionStream(response.body, (delta) => {
         if (onDelta) {
