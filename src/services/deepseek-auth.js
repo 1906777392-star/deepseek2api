@@ -62,15 +62,30 @@ function resolveRequestPath(path) {
     : resolveDeepseekApiPath(path);
 }
 
+function resolveValidationDetail(result) {
+  const detail = result?.detail ?? result?.errors;
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => item?.msg || item?.message || JSON.stringify(item))
+      .filter(Boolean)
+      .join("；");
+  }
+  return "";
+}
+
 function resolveDeepseekError(result, status) {
-  const message = result?.data?.biz_msg || result?.msg;
+  const message = result?.data?.biz_msg
+    || result?.msg
+    || result?.message
+    || resolveValidationDetail(result);
   if (message) {
     return String(message);
   }
 
-  const bizCode = result?.data?.biz_code;
-  const code = result?.code;
-  const resolvedCode = bizCode ?? code;
+  const resolvedCode = result?.data?.biz_code ?? result?.code;
   return resolvedCode === undefined
     ? `DeepSeek 请求失败（HTTP ${status}）`
     : `DeepSeek 请求失败（业务码 ${resolvedCode}，HTTP ${status}）`;
@@ -92,7 +107,8 @@ async function requestDeepseekJson(path, body) {
     if (wafAction) {
       throw new Error(`DeepSeek 风控拦截：${wafAction}，请稍后再试`);
     }
-    throw new Error(`DeepSeek 请求失败（HTTP ${response.status}）`);
+    const preview = responseText.trim().slice(0, 180);
+    throw new Error(preview || `DeepSeek 请求失败（HTTP ${response.status}）`);
   }
 
   const bizCode = result?.data?.biz_code;
@@ -115,11 +131,14 @@ export async function loginToDeepseek({ loginValue, password, deviceId }) {
 export async function sendDeepseekSmsCode({ mobile, deviceId }) {
   const normalizedMobile = assertChineseMobile(mobile);
   return requestDeepseekJson("/api/v0/users/create_sms_verification_code", {
-    locale: "zh_CN",
+    mobile: normalizedMobile,
+    area_code: "+86",
+    scenario: "login",
     device_id: deviceId,
-    scenario: "mobile_login",
-    mobile_number: normalizedMobile,
-    area_code: "+86"
+    locale: "zh-CN",
+    turnstile_token: "",
+    shumei_verification: "",
+    hcaptcha_token: ""
   });
 }
 
@@ -131,7 +150,9 @@ export async function loginToDeepseekWithSms({ mobile, code, deviceId }) {
     area_code: "+86",
     sms_verification_code: normalizedCode,
     device_id: deviceId,
-    os: "web"
+    os: "web",
+    region: "CN",
+    locale: "zh-CN"
   });
 }
 
