@@ -10,7 +10,15 @@ const TOOL_CAPTURE_PAIRS = Object.freeze([
   { open: "<|dsml|tool_call", close: "</tool_call>" },
   { open: "<|dsml|function_call", close: "</function_call>" },
   { open: "<|dsml|invoke", close: "</invoke>" },
-  { open: "<|dsml|tool_use", close: "</tool_use>" }
+  { open: "<|dsml|tool_use", close: "</tool_use>" },
+  // Fail closed when a reasoning model starts the call in its thinking channel
+  // and the visible answer begins halfway through the XML. The shared streaming
+  // sieve normally joins both halves; these pairs are the last-resort guard that
+  // prevents arguments and credentials from becoming assistant text.
+  { open: "<parameters", close: "</tool_call>" },
+  { open: "<arguments", close: "</tool_call>" },
+  { open: "<input", close: "</tool_call>" },
+  { open: "<![cdata[", close: "</tool_call>" }
 ]);
 const IGNORED_WRAPPER_OPEN_TAGS = Object.freeze([
   "<|dsml|tool_calls",

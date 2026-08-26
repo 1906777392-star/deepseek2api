@@ -40,6 +40,35 @@ test("stream sieve removes a split DSML wrapper and emits one tool call", () => 
   assert.deepEqual(calls[0].input, { count: 1, aspect_2: "竖图" });
 });
 
+test("one sieve joins a tool call split between reasoning and answer channels", () => {
+  const sieve = createToolSieve(["draw"]);
+  const reasoningEvents = sieve.push(
+    '先判断画面。<tool_call><tool_name>draw</tool_name>'
+  );
+  const answerEvents = [
+    ...sieve.push('<parameters><![CDATA[{"count":1,"token_2":"secret-code"}]]></parameters></tool_call>'),
+    ...sieve.flush()
+  ];
+  const events = [...reasoningEvents, ...answerEvents];
+  const text = events.filter((event) => event.type === "text").map((event) => event.text).join("");
+  const calls = events.flatMap((event) => event.type === "tool_calls" ? event.calls : []);
+
+  assert.equal(text, "先判断画面。");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "draw");
+  assert.deepEqual(calls[0].input, { count: 1, token_2: "secret-code" });
+});
+
+test("orphan parameter tail fails closed and never leaks credentials", () => {
+  const parsed = extractToolAwareOutput(
+    '<parameters><![CDATA[{"token_2":"must-not-leak"}]]></parameters></tool_call>',
+    ["draw"]
+  );
+
+  assert.equal(parsed.content, "");
+  assert.deepEqual(parsed.toolCalls, []);
+});
+
 test("malformed unfinished DSML calls fail closed instead of leaking arguments", () => {
   const parsed = extractToolAwareOutput(
     '正常文字<|DSML|invoke name="draw"><parameters>{"token_2":"must-not-leak"}',

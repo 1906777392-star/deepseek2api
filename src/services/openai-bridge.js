@@ -113,11 +113,38 @@ function withReasoning(message, reasoningContent) {
   return safeReasoning ? { ...message, reasoning_content: safeReasoning } : message;
 }
 
+function dedupeToolCalls(calls) {
+  const seen = new Set();
+  return (calls ?? []).filter((call) => {
+    const key = `${call?.name ?? ""}\u0000${call?.argumentsText ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseCollectedToolOutput(content, reasoningContent, toolNames) {
+  if (!toolNames.length) {
+    return { content, reasoningContent, toolCalls: [] };
+  }
+
+  const visible = extractToolAwareOutput(content, toolNames);
+  const reasoning = extractToolAwareOutput(reasoningContent, toolNames);
+  const joined = extractToolAwareOutput(`${reasoningContent}${content}`, toolNames);
+  return {
+    content: visible.content,
+    reasoningContent: reasoning.content,
+    toolCalls: dedupeToolCalls([
+      ...visible.toolCalls,
+      ...reasoning.toolCalls,
+      ...joined.toolCalls
+    ])
+  };
+}
+
 function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent, searchResults) {
   const sourcedContent = `${content}${formatSearchSources(searchResults)}`;
-  const parsed = requestOptions.toolNames.length
-    ? extractToolAwareOutput(sourcedContent, requestOptions.toolNames)
-    : { content: sourcedContent, toolCalls: [] };
+  const parsed = parseCollectedToolOutput(sourcedContent, reasoningContent, requestOptions.toolNames);
   ensureToolChoiceSatisfied(requestOptions.toolChoicePolicy, parsed.toolCalls);
 
   const baseMessage = {
@@ -133,7 +160,7 @@ function buildChatCompletionPayload(completionId, requestOptions, content, reaso
       choices: [{
         index: 0,
         finish_reason: "tool_calls",
-        message: withReasoning({ ...baseMessage, tool_calls: createChatToolCalls(parsed.toolCalls) }, reasoningContent)
+        message: withReasoning({ ...baseMessage, tool_calls: createChatToolCalls(parsed.toolCalls) }, parsed.reasoningContent)
       }]
     };
   }
@@ -146,7 +173,7 @@ function buildChatCompletionPayload(completionId, requestOptions, content, reaso
     choices: [{
       index: 0,
       finish_reason: "stop",
-      message: withReasoning(baseMessage, reasoningContent)
+      message: withReasoning(baseMessage, parsed.reasoningContent)
     }]
   };
 }
@@ -191,9 +218,12 @@ export async function streamOpenAiResponse(options) {
   const { account, body, deleteAfterFinish = false, response, toolCallsEnabled = false } = options;
   const completionId = createCompletionId();
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
+  // Reasoning models can begin XML in the thinking channel and finish it in the
+  // answer channel. One shared sieve must therefore see both streams in order.
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   let toolCallIndex = 0;
   let sawToolCall = false;
+  let lastRoutedKind = "response";
 
   response.writeHead(200, {
     "cache-control": "no-cache, no-transform",
@@ -225,20 +255,26 @@ export async function streamOpenAiResponse(options) {
   };
   const reasoningRedactor = createStreamingReasoningRedactor(emitReasoningText);
 
-  const emitResponseText = (text) => {
+  const emitPlainText = (kind, text) => {
     if (!text) return;
+    if (kind === "thinking") {
+      reasoningRedactor.push(text);
+      return;
+    }
     reasoningRedactor.flush();
+    writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text }));
+  };
+
+  const routeToolAwareText = (kind, text) => {
+    if (!text) return;
+    lastRoutedKind = kind;
     if (!toolSieve) {
-      writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text }));
+      emitPlainText(kind, text);
       return;
     }
     toolSieve.push(text).forEach((event) => {
       if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
-      else if (event.text) writeSseChunk(response, buildChunkPayload(
-        completionId,
-        requestOptions.model.id,
-        { content: event.text }
-      ));
+      else if (event.text) emitPlainText(kind, event.text);
     });
   };
 
@@ -246,29 +282,19 @@ export async function streamOpenAiResponse(options) {
     const { searchResults } = await streamCompletionContent({
       account,
       deleteAfterFinish,
-      onDelta: (delta) => {
-        if (delta.kind === "thinking") {
-          reasoningRedactor.push(delta.text);
-        } else {
-          emitResponseText(delta.text);
-        }
-      },
+      onDelta: (delta) => routeToolAwareText(delta.kind, delta.text),
       requestOptions
     });
 
-    reasoningRedactor.flush();
-    emitResponseText(formatSearchSources(searchResults));
+    routeToolAwareText("response", formatSearchSources(searchResults));
 
     if (toolSieve) {
       toolSieve.flush().forEach((event) => {
         if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
-        else if (event.text) writeSseChunk(response, buildChunkPayload(
-          completionId,
-          requestOptions.model.id,
-          { content: event.text }
-        ));
+        else if (event.text) emitPlainText(lastRoutedKind, event.text);
       });
     }
+    reasoningRedactor.flush();
 
     writeSseChunk(response, buildChunkPayload(
       completionId,
