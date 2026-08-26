@@ -162,6 +162,7 @@ export async function streamOpenAiResponse(options) {
   let toolCallIndex = 0;
   let sawToolCall = false;
   let reasoningBuffer = "";
+  let reasoningEmitted = false;
 
   response.writeHead(200, {
     "cache-control": "no-cache, no-transform",
@@ -183,8 +184,21 @@ export async function streamOpenAiResponse(options) {
     toolCallIndex += calls.length;
   };
 
+  const emitReasoning = () => {
+    if (reasoningEmitted) return;
+    reasoningEmitted = true;
+    const safeReasoning = redactSensitiveReasoning(reasoningBuffer);
+    if (!safeReasoning) return;
+    writeSseChunk(response, buildChunkPayload(
+      completionId,
+      requestOptions.model.id,
+      { reasoning_content: safeReasoning }
+    ));
+  };
+
   const emitResponseText = (text) => {
     if (!text) return;
+    emitReasoning();
     if (!toolSieve) {
       writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text }));
       return;
@@ -212,15 +226,7 @@ export async function streamOpenAiResponse(options) {
     requestOptions
   });
 
-  const safeReasoning = redactSensitiveReasoning(reasoningBuffer);
-  if (safeReasoning) {
-    writeSseChunk(response, buildChunkPayload(
-      completionId,
-      requestOptions.model.id,
-      { reasoning_content: safeReasoning }
-    ));
-  }
-
+  emitReasoning();
   emitResponseText(formatSearchSources(searchResults));
 
   if (toolSieve) {
