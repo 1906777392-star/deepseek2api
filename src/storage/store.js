@@ -1,6 +1,10 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 import { config } from "../config.js";
+
+const STORE_KEY = process.env.APP_REDIS_STORE_KEY || "deepseek2api:app-state:v1";
+const storeContext = new AsyncLocalStorage();
 
 function defaultState() {
   return {
@@ -129,24 +133,132 @@ function normalizeState(value) {
   };
 }
 
-export function readStore() {
+function resolveRedisConfig() {
+  const url = process.env.UPSTASH_REDIS_REST_URL
+    || process.env.KV_REST_API_URL
+    || process.env.REDIS_REST_URL
+    || "";
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+    || process.env.KV_REST_API_TOKEN
+    || process.env.REDIS_REST_TOKEN
+    || "";
+
+  return url && token ? { url: url.replace(/\/$/, ""), token } : null;
+}
+
+async function executeRedis(command) {
+  const redis = resolveRedisConfig();
+  if (!redis) {
+    if (process.env.VERCEL) {
+      throw new Error("Upstash Redis environment variables are missing");
+    }
+    return null;
+  }
+
+  const response = await fetch(redis.url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${redis.token}`,
+      "content-type": "application/json"
+    },
+    body: JSON.stringify(command)
+  });
+
+  if (!response.ok) {
+    throw new Error(`Upstash Redis request failed (HTTP ${response.status})`);
+  }
+
+  const payload = await response.json();
+  if (payload.error) {
+    throw new Error(`Upstash Redis error: ${payload.error}`);
+  }
+
+  return payload.result;
+}
+
+function readLocalStore() {
   if (!existsSync(config.dataFile)) {
     const state = defaultState();
-    writeStore(state);
+    writeFileSync(config.dataFile, JSON.stringify(state, null, 2));
     return state;
   }
 
-  const raw = readFileSync(config.dataFile, "utf8");
-  return normalizeState(JSON.parse(raw));
+  return normalizeState(JSON.parse(readFileSync(config.dataFile, "utf8")));
+}
+
+function writeLocalStore(state) {
+  writeFileSync(config.dataFile, JSON.stringify(normalizeState(state), null, 2));
+}
+
+async function loadRequestState() {
+  if (!resolveRedisConfig()) {
+    if (process.env.VERCEL) {
+      throw new Error("Upstash Redis environment variables are missing");
+    }
+    return readLocalStore();
+  }
+
+  const stored = await executeRedis(["GET", STORE_KEY]);
+  if (!stored) {
+    return defaultState();
+  }
+
+  const parsed = typeof stored === "string" ? JSON.parse(stored) : stored;
+  return normalizeState(parsed);
+}
+
+async function persistRequestState(state) {
+  const normalized = normalizeState(state);
+  if (!resolveRedisConfig()) {
+    if (process.env.VERCEL) {
+      throw new Error("Upstash Redis environment variables are missing");
+    }
+    writeLocalStore(normalized);
+    return;
+  }
+
+  await executeRedis(["SET", STORE_KEY, JSON.stringify(normalized)]);
+}
+
+export async function runWithStore(callback) {
+  const context = {
+    dirty: false,
+    state: await loadRequestState()
+  };
+
+  return storeContext.run(context, async () => {
+    try {
+      return await callback();
+    } finally {
+      if (context.dirty) {
+        await persistRequestState(context.state);
+      }
+    }
+  });
+}
+
+export function readStore() {
+  const context = storeContext.getStore();
+  return context ? context.state : readLocalStore();
 }
 
 export function writeStore(state) {
-  writeFileSync(config.dataFile, JSON.stringify(normalizeState(state), null, 2));
+  const context = storeContext.getStore();
+  if (context) {
+    context.state = normalizeState(state);
+    context.dirty = true;
+    return;
+  }
+
+  if (process.env.VERCEL) {
+    throw new Error("Persistent store write attempted outside a request context");
+  }
+  writeLocalStore(state);
 }
 
 export function updateStore(updater) {
   const current = readStore();
   const next = updater(current);
   writeStore(next);
-  return next;
+  return normalizeState(next);
 }

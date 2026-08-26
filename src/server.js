@@ -4,7 +4,16 @@ import { config } from "./config.js";
 import { handleApiRequest } from "./routes/api-routes.js";
 import { handleOpenAiRequest } from "./routes/openai-routes.js";
 import { handleProxyRequest } from "./routes/proxy-routes.js";
+import { runWithStore } from "./storage/store.js";
 import { parseCookies, sendError, serveStaticFile } from "./utils/http.js";
+
+function requestNeedsStore(pathname) {
+  return pathname.startsWith("/api/")
+    || pathname.startsWith("/proxy/")
+    || pathname.startsWith("/v1/")
+    || pathname === "/models"
+    || pathname === "/models/";
+}
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
@@ -20,7 +29,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  try {
+  const handleRequest = async () => {
     if (url.pathname.startsWith("/api/")) {
       const handled = await handleApiRequest(request, response, url);
       if (!handled) {
@@ -44,6 +53,14 @@ const server = createServer(async (request, response) => {
 
     if (!serveStaticFile(request, response, url.pathname)) {
       sendError(response, 404, "Page not found");
+    }
+  };
+
+  try {
+    if (requestNeedsStore(url.pathname)) {
+      await runWithStore(handleRequest);
+    } else {
+      await handleRequest();
     }
   } catch (error) {
     if (response.headersSent || response.writableEnded) {
