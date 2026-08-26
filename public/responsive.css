@@ -199,6 +199,36 @@
   .bottom-tab-bar {
     display: flex;
   }
+
+  /* 会话列表只属于聊天页，避免账号、Key、日志页面被它推到几屏之后。 */
+  .sidebar {
+    display: none;
+  }
+
+  body[data-active-tab="chat"] .sidebar {
+    display: block;
+    max-height: 240px;
+    overflow: auto;
+    padding: 16px;
+  }
+
+  body[data-active-tab="chat"] .session-list {
+    max-height: 150px;
+    overflow: auto;
+  }
+
+  .page-body {
+    gap: 12px;
+  }
+
+  .page-content {
+    padding: 16px;
+  }
+
+  .page-section,
+  .chat-section {
+    scroll-margin-top: 12px;
+  }
 }
 
 @media (max-width: 560px) {
