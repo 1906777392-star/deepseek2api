@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { collectCompletionContent, streamCompletionContent } from "./openai-completion-runner.js";
+import { extractLatestUserImageContext } from "./openai-image-input.js";
 import { assertNoLegacySearchOptions, resolveOpenAiModel } from "./openai-request.js";
 import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js";
 import { buildOpenAiPrompt } from "./openai-tool-prompt.js";
@@ -23,17 +24,6 @@ function createChatToolCalls(calls, startIndex = 0) {
   }));
 }
 
-function extractImageInputs(messages) {
-  return (messages ?? []).flatMap((message) => {
-    if (!Array.isArray(message?.content)) return [];
-    return message.content.flatMap((part) => {
-      if (part?.type !== "image_url") return [];
-      const imageUrl = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
-      return imageUrl ? [{ url: imageUrl, detail: part.image_url?.detail ?? "auto" }] : [];
-    });
-  });
-}
-
 function resolveCompletionRequest(body, toolCallsEnabled) {
   assertNoLegacySearchOptions(body);
   if (!toolCallsEnabled && hasChatToolingRequest(body)) {
@@ -41,10 +31,10 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   }
 
   const model = resolveOpenAiModel(body?.model);
-  const imageInputs = extractImageInputs(body?.messages ?? []);
+  const imageContext = extractLatestUserImageContext(body?.messages ?? []);
   const refFileIds = Array.isArray(body?.ref_file_ids) ? body.ref_file_ids.filter(Boolean) : [];
 
-  if ((imageInputs.length || refFileIds.length) && model.supportsUploads === false) {
+  if ((imageContext.imageInputs.length || refFileIds.length) && model.supportsUploads === false) {
     throw createOpenAiError(400, "Expert models do not support file or image uploads");
   }
 
@@ -57,7 +47,9 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   return {
     model,
     prompt: promptRequest.prompt,
-    imageInputs,
+    imageInputs: imageContext.imageInputs,
+    imageUserText: imageContext.userText,
+    refFileIds,
     toolChoicePolicy: promptRequest.toolChoicePolicy,
     toolNames: promptRequest.toolNames
   };
@@ -218,8 +210,6 @@ export async function streamOpenAiResponse(options) {
   const { account, body, deleteAfterFinish = false, response, toolCallsEnabled = false } = options;
   const completionId = createCompletionId();
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
-  // Reasoning models can begin XML in the thinking channel and finish it in the
-  // answer channel. One shared sieve must therefore see both streams in order.
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   let toolCallIndex = 0;
   let sawToolCall = false;
