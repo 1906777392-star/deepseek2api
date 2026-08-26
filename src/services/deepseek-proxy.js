@@ -6,7 +6,8 @@ import {
   inspectResponseForCaptcha
 } from "./captcha-service.js";
 
-const powChallengeCache = new Map();
+const preparedPowHeaders = new Map();
+const powHeaderInflight = new Map();
 
 function buildTargetUrl(path, query) {
   const url = new URL(resolveDeepseekApiPath(path), config.deepseekBaseUrl);
@@ -24,9 +25,8 @@ function getPowCacheKey(account, path) {
   return `${account.id || account.deepseekUserId || account.loginValue}:${path}`;
 }
 
-function isFreshChallenge(challenge) {
-  const expireAt = Number(challenge?.expire_at ?? challenge?.expireAt ?? 0);
-  return expireAt > Math.floor(Date.now() / 1000) + 30;
+function isFreshPreparedHeader(entry) {
+  return Number(entry?.expireAt ?? 0) > Math.floor(Date.now() / 1000) + 30;
 }
 
 async function fetchPowChallenge(account, path) {
@@ -57,58 +57,62 @@ async function fetchPowChallenge(account, path) {
   return challenge;
 }
 
-async function getPowChallenge(account, path) {
-  const cacheKey = getPowCacheKey(account, path);
-  const cached = powChallengeCache.get(cacheKey);
-  if (isFreshChallenge(cached)) {
-    powChallengeCache.delete(cacheKey);
-    return cached;
-  }
-
-  powChallengeCache.delete(cacheKey);
-  return fetchPowChallenge(account, path);
-}
-
-function prefetchPowChallenge(account, path) {
-  if (!config.powPrefetchCount) {
-    return;
-  }
-
-  const cacheKey = getPowCacheKey(account, path);
-  if (isFreshChallenge(powChallengeCache.get(cacheKey))) {
-    return;
-  }
-
-  fetchPowChallenge(account, path)
-    .then((challenge) => {
-      if (isFreshChallenge(challenge)) {
-        powChallengeCache.set(cacheKey, challenge);
-      }
-    })
-    .catch(() => {
-      powChallengeCache.delete(cacheKey);
-    });
-}
-
-async function createPowHeader(account, path) {
-  const challenge = await getPowChallenge(account, path);
+async function buildPreparedPowHeader(account, path) {
+  const challenge = await fetchPowChallenge(account, path);
   const solved = await solvePowChallenge({
     ...challenge,
     expireAt: challenge.expire_at
   });
 
-  prefetchPowChallenge(account, path);
+  return {
+    expireAt: challenge.expire_at,
+    value: Buffer.from(
+      JSON.stringify({
+        algorithm: solved.algorithm,
+        challenge: solved.challenge,
+        salt: solved.salt,
+        answer: solved.answer,
+        signature: solved.signature,
+        target_path: path
+      })
+    ).toString("base64")
+  };
+}
 
-  return Buffer.from(
-    JSON.stringify({
-      algorithm: solved.algorithm,
-      challenge: solved.challenge,
-      salt: solved.salt,
-      answer: solved.answer,
-      signature: solved.signature,
-      target_path: path
+function prefetchPreparedPowHeader(account, path) {
+  if (!config.powPrefetchCount) return;
+  const key = getPowCacheKey(account, path);
+  if (isFreshPreparedHeader(preparedPowHeaders.get(key)) || powHeaderInflight.has(key)) return;
+
+  const promise = buildPreparedPowHeader(account, path)
+    .then((entry) => {
+      if (isFreshPreparedHeader(entry)) preparedPowHeaders.set(key, entry);
+      return entry;
     })
-  ).toString("base64");
+    .finally(() => powHeaderInflight.delete(key));
+  powHeaderInflight.set(key, promise);
+}
+
+async function createPowHeader(account, path) {
+  const key = getPowCacheKey(account, path);
+  const cached = preparedPowHeaders.get(key);
+  if (isFreshPreparedHeader(cached)) {
+    preparedPowHeaders.delete(key);
+    prefetchPreparedPowHeader(account, path);
+    return cached.value;
+  }
+
+  let entry;
+  const inflight = powHeaderInflight.get(key);
+  if (inflight) {
+    entry = await inflight;
+    preparedPowHeaders.delete(key);
+  } else {
+    entry = await buildPreparedPowHeader(account, path);
+  }
+
+  prefetchPreparedPowHeader(account, path);
+  return entry.value;
 }
 
 async function performRequest({ account, method, path, query, body, headers }) {
@@ -215,7 +219,6 @@ export async function proxyDeepseekRequest(options) {
     ...options,
     account: captchaPass.account
   });
-
   return {
     refreshedAccount: captchaPass.account,
     response: captchaRetriedResponse
