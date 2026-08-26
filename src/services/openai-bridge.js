@@ -25,15 +25,9 @@ function createChatToolCalls(calls, startIndex = 0) {
 
 function extractImageInputs(messages) {
   return (messages ?? []).flatMap((message) => {
-    if (!Array.isArray(message?.content)) {
-      return [];
-    }
-
+    if (!Array.isArray(message?.content)) return [];
     return message.content.flatMap((part) => {
-      if (part?.type !== "image_url") {
-        return [];
-      }
-
+      if (part?.type !== "image_url") return [];
       const imageUrl = typeof part.image_url === "string" ? part.image_url : part.image_url?.url;
       return imageUrl ? [{ url: imageUrl, detail: part.image_url?.detail ?? "auto" }] : [];
     });
@@ -42,7 +36,6 @@ function extractImageInputs(messages) {
 
 function resolveCompletionRequest(body, toolCallsEnabled) {
   assertNoLegacySearchOptions(body);
-
   if (!toolCallsEnabled && hasChatToolingRequest(body)) {
     throw createOpenAiError(400, "Tool calls are disabled for this API key");
   }
@@ -54,7 +47,6 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   if ((imageInputs.length || refFileIds.length) && model.supportsUploads === false) {
     throw createOpenAiError(400, "Expert models do not support file or image uploads");
   }
-
   if (imageInputs.length && model.modelType !== "vision") {
     throw createOpenAiError(400, "Image inputs require deepseek-vision or deepseek-vision-reasoner");
   }
@@ -74,36 +66,43 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   };
 }
 
-function withReasoning(message, reasoningContent) {
-  return reasoningContent
-    ? { ...message, reasoning_content: reasoningContent }
-    : message;
+function formatSearchSources(searchResults = []) {
+  const entries = searchResults
+    .filter((item) => item?.url)
+    .slice(0, 8)
+    .map((item, index) => {
+      const label = item.title || item.siteName || `来源 ${index + 1}`;
+      return `${index + 1}. [${label.replaceAll("[", "［").replaceAll("]", "］")}](${item.url})`;
+    });
+  return entries.length ? `\n\n**参考来源**\n${entries.join("\n")}` : "";
 }
 
-function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent) {
-  const parsed = requestOptions.toolNames.length
-    ? extractToolAwareOutput(content, requestOptions.toolNames)
-    : { content, toolCalls: [] };
+function withReasoning(message, reasoningContent) {
+  return reasoningContent ? { ...message, reasoning_content: reasoningContent } : message;
+}
 
+function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent, searchResults) {
+  const sourcedContent = `${content}${formatSearchSources(searchResults)}`;
+  const parsed = requestOptions.toolNames.length
+    ? extractToolAwareOutput(sourcedContent, requestOptions.toolNames)
+    : { content: sourcedContent, toolCalls: [] };
   ensureToolChoiceSatisfied(requestOptions.toolChoicePolicy, parsed.toolCalls);
 
+  const baseMessage = {
+    role: "assistant",
+    content: parsed.content.length ? parsed.content : null
+  };
   if (parsed.toolCalls.length) {
     return {
       id: completionId,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
       model: requestOptions.model.id,
-      choices: [
-        {
-          index: 0,
-          finish_reason: "tool_calls",
-          message: withReasoning({
-            role: "assistant",
-            content: parsed.content.length ? parsed.content : null,
-            tool_calls: createChatToolCalls(parsed.toolCalls)
-          }, reasoningContent)
-        }
-      ]
+      choices: [{
+        index: 0,
+        finish_reason: "tool_calls",
+        message: withReasoning({ ...baseMessage, tool_calls: createChatToolCalls(parsed.toolCalls) }, reasoningContent)
+      }]
     };
   }
 
@@ -112,16 +111,11 @@ function buildChatCompletionPayload(completionId, requestOptions, content, reaso
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
     model: requestOptions.model.id,
-    choices: [
-      {
-        index: 0,
-        finish_reason: "stop",
-        message: withReasoning({
-          role: "assistant",
-          content: parsed.content
-        }, reasoningContent)
-      }
-    ]
+    choices: [{
+      index: 0,
+      finish_reason: "stop",
+      message: withReasoning(baseMessage, reasoningContent)
+    }]
   };
 }
 
@@ -129,7 +123,6 @@ function buildChunkPayload(completionId, model, delta, finishReason) {
   const choice = finishReason
     ? { index: 0, delta: {}, finish_reason: finishReason }
     : { index: 0, delta };
-
   return {
     id: completionId,
     object: "chat.completion.chunk",
@@ -143,40 +136,21 @@ function writeSseChunk(response, payload) {
   response.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-export async function collectOpenAiResponse({
-  account,
-  body,
-  deleteAfterFinish = false,
-  toolCallsEnabled = false
-}) {
+export async function collectOpenAiResponse({ account, body, deleteAfterFinish = false, toolCallsEnabled = false }) {
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
-  const { content, reasoningContent } = await collectCompletionContent({
+  const { content, reasoningContent, searchResults } = await collectCompletionContent({
     account,
     deleteAfterFinish,
     requestOptions
   });
-
-  return buildChatCompletionPayload(
-    createCompletionId(),
-    requestOptions,
-    content,
-    reasoningContent
-  );
+  return buildChatCompletionPayload(createCompletionId(), requestOptions, content, reasoningContent, searchResults);
 }
 
 export async function streamOpenAiResponse(options) {
-  const {
-    account,
-    body,
-    deleteAfterFinish = false,
-    response,
-    toolCallsEnabled = false
-  } = options;
+  const { account, body, deleteAfterFinish = false, response, toolCallsEnabled = false } = options;
   const completionId = createCompletionId();
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
-  const toolSieve = requestOptions.toolNames.length
-    ? createToolSieve(requestOptions.toolNames)
-    : null;
+  const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   let toolCallIndex = 0;
   let sawToolCall = false;
 
@@ -187,18 +161,10 @@ export async function streamOpenAiResponse(options) {
     "x-accel-buffering": "no"
   });
   response.flushHeaders?.();
-
-  writeSseChunk(response, buildChunkPayload(
-    completionId,
-    requestOptions.model.id,
-    { role: "assistant" }
-  ));
+  writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { role: "assistant" }));
 
   const emitToolCalls = (calls) => {
-    if (!calls.length) {
-      return;
-    }
-
+    if (!calls.length) return;
     sawToolCall = true;
     writeSseChunk(response, buildChunkPayload(
       completionId,
@@ -209,33 +175,22 @@ export async function streamOpenAiResponse(options) {
   };
 
   const emitResponseText = (text) => {
+    if (!text) return;
     if (!toolSieve) {
-      writeSseChunk(response, buildChunkPayload(
-        completionId,
-        requestOptions.model.id,
-        { content: text }
-      ));
+      writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text }));
       return;
     }
-
-    const events = toolSieve.push(text);
-    events.forEach((event) => {
-      if (event.type === "tool_calls") {
-        emitToolCalls(event.calls ?? []);
-        return;
-      }
-
-      if (event.text) {
-        writeSseChunk(response, buildChunkPayload(
-          completionId,
-          requestOptions.model.id,
-          { content: event.text }
-        ));
-      }
+    toolSieve.push(text).forEach((event) => {
+      if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
+      else if (event.text) writeSseChunk(response, buildChunkPayload(
+        completionId,
+        requestOptions.model.id,
+        { content: event.text }
+      ));
     });
   };
 
-  await streamCompletionContent({
+  const { searchResults } = await streamCompletionContent({
     account,
     deleteAfterFinish,
     onDelta: (delta) => {
@@ -245,29 +200,23 @@ export async function streamOpenAiResponse(options) {
           requestOptions.model.id,
           { reasoning_content: delta.text }
         ));
-        return;
+      } else {
+        emitResponseText(delta.text);
       }
-
-      emitResponseText(delta.text);
     },
     requestOptions
   });
 
-  if (toolSieve) {
-    const tailEvents = toolSieve.flush();
-    tailEvents.forEach((event) => {
-      if (event.type === "tool_calls") {
-        emitToolCalls(event.calls ?? []);
-        return;
-      }
+  emitResponseText(formatSearchSources(searchResults));
 
-      if (event.text) {
-        writeSseChunk(response, buildChunkPayload(
-          completionId,
-          requestOptions.model.id,
-          { content: event.text }
-        ));
-      }
+  if (toolSieve) {
+    toolSieve.flush().forEach((event) => {
+      if (event.type === "tool_calls") emitToolCalls(event.calls ?? []);
+      else if (event.text) writeSseChunk(response, buildChunkPayload(
+        completionId,
+        requestOptions.model.id,
+        { content: event.text }
+      ));
     });
   }
 

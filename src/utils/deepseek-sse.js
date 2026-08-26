@@ -62,48 +62,118 @@ function resolveFragmentKind(type) {
   return FRAGMENT_KIND_BY_TYPE[type] ?? null;
 }
 
-function getInitialFragment(payload) {
-  const fragments = payload.v?.response?.fragments;
-  return Array.isArray(fragments) ? fragments.at(-1) ?? null : null;
+function joinPath(parent, child) {
+  if (!parent) return child || "";
+  if (!child) return parent;
+  return `${parent.replace(/\/$/, "")}/${String(child).replace(/^\//, "")}`;
 }
 
-function getAppendedFragment(payload) {
-  if (payload.p !== "response/fragments" || payload.o !== "APPEND") {
-    return null;
+function flattenOperations(payload, inherited = { path: "", op: "SET" }) {
+  const path = payload?.p ?? inherited.path;
+  const op = payload?.o ?? inherited.op;
+
+  if (op !== "BATCH" || !Array.isArray(payload?.v)) {
+    return [{ path, op, value: payload?.v }];
   }
 
-  return Array.isArray(payload.v) ? payload.v.at(-1) ?? null : null;
+  const childState = { path: "", op: "SET" };
+  return payload.v.flatMap((item) => {
+    const childPath = item?.p ?? childState.path;
+    const childOp = item?.o ?? childState.op;
+    childState.path = childPath;
+    childState.op = childOp;
+    return flattenOperations(
+      { ...item, p: joinPath(path, childPath), o: childOp },
+      { path: joinPath(path, childPath), op: childOp }
+    );
+  });
 }
 
-function resolveCurrentKind(payload, currentKind) {
-  const fragment = getAppendedFragment(payload) ?? getInitialFragment(payload);
-  return resolveFragmentKind(fragment?.type) ?? currentKind;
+function stripReferenceMarkers(text) {
+  return String(text ?? "")
+    .replace(/\s*\[reference:\d+\]/gi, "")
+    .replace(/\s*\[citation:[^\]\r\n]+\]/gi, "");
 }
 
-function extractFragmentText(payload) {
-  const fragment = getInitialFragment(payload);
-  if (typeof fragment?.content === "string") {
-    return fragment.content;
+function collectSearchResult(result, output, seen) {
+  if (!result || typeof result !== "object") return;
+  const url = typeof result.url === "string" ? result.url.trim() : "";
+  if (!url || seen.has(url)) return;
+  seen.add(url);
+  output.push({
+    url,
+    title: typeof result.title === "string" ? result.title.trim() : "",
+    siteName: typeof result.site_name === "string" ? result.site_name.trim() : "",
+    snippet: typeof result.snippet === "string" ? result.snippet.trim() : ""
+  });
+}
+
+function collectSearchResults(value, output, seen, depth = 0) {
+  if (!value || depth > 8) return;
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectSearchResults(entry, output, seen, depth + 1));
+    return;
+  }
+  if (typeof value !== "object") return;
+
+  if (typeof value.url === "string" && (value.title || value.snippet || value.site_name)) {
+    collectSearchResult(value, output, seen);
   }
 
-  const appendedFragment = getAppendedFragment(payload);
-  if (typeof appendedFragment?.content === "string") {
-    return appendedFragment.content;
-  }
-
-  if (payload.p === "response/fragments/-1/content" && typeof payload.v === "string") {
-    return payload.v;
-  }
-
-  if (!("p" in payload) && typeof payload.v === "string") {
-    return payload.v;
-  }
-
-  return "";
+  Object.values(value).forEach((entry) => collectSearchResults(entry, output, seen, depth + 1));
 }
 
 export function createDeepseekDeltaDecoder() {
   let currentKind = "response";
+  let currentPath = "";
+  let currentOp = "SET";
+  const searchResults = [];
+  const seenSearchUrls = new Set();
+
+  function consumeOperation(operation) {
+    const { path, value } = operation;
+
+    if (!path && value && typeof value === "object") {
+      const fragments = value?.response?.fragments;
+      if (Array.isArray(fragments)) {
+        collectSearchResults(fragments, searchResults, seenSearchUrls);
+        const fragment = fragments.at(-1);
+        currentKind = resolveFragmentKind(fragment?.type) ?? currentKind;
+        const text = stripReferenceMarkers(fragment?.content);
+        return text ? { kind: currentKind, text } : null;
+      }
+      return null;
+    }
+
+    if (/\/results$/.test(path) || path === "response/search_results") {
+      collectSearchResults(value, searchResults, seenSearchUrls);
+      return null;
+    }
+
+    if (path === "response/fragments" && Array.isArray(value)) {
+      collectSearchResults(value, searchResults, seenSearchUrls);
+      const deltas = [];
+      value.forEach((fragment) => {
+        const kind = resolveFragmentKind(fragment?.type);
+        if (kind) currentKind = kind;
+        const text = stripReferenceMarkers(fragment?.content);
+        if (text && kind) deltas.push({ kind, text });
+      });
+      return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null);
+    }
+
+    if (/\/type$/.test(path) && typeof value === "string") {
+      currentKind = resolveFragmentKind(value) ?? currentKind;
+      return null;
+    }
+
+    if (/\/content$/.test(path) && typeof value === "string") {
+      const text = stripReferenceMarkers(value);
+      return text ? { kind: currentKind, text } : null;
+    }
+
+    return null;
+  }
 
   return {
     consume(payloadText) {
@@ -113,19 +183,30 @@ export function createDeepseekDeltaDecoder() {
       } catch {
         return null;
       }
-      currentKind = resolveCurrentKind(payload, currentKind);
-      const text = extractFragmentText(payload);
-      return text ? { kind: currentKind, text } : null;
+
+      const path = payload?.p ?? currentPath;
+      const op = payload?.o ?? currentOp;
+      currentPath = path;
+      currentOp = op;
+      const operations = flattenOperations({ ...payload, p: path, o: op }, { path, op });
+      const deltas = operations.flatMap((operation) => {
+        const result = consumeOperation(operation);
+        if (!result) return [];
+        return Array.isArray(result) ? result : [result];
+      });
+      return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null);
+    },
+    getSearchResults() {
+      return searchResults.map((item) => ({ ...item }));
     }
   };
 }
 
 export function extractContentDelta(payloadText) {
-  let payload;
-  try {
-    payload = JSON.parse(payloadText);
-  } catch {
-    return "";
+  const decoder = createDeepseekDeltaDecoder();
+  const delta = decoder.consume(payloadText);
+  if (Array.isArray(delta)) {
+    return delta.map((entry) => entry.text).join("");
   }
-  return extractFragmentText(payload);
+  return delta?.text ?? "";
 }

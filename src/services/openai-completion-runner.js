@@ -44,16 +44,17 @@ async function prepareRequestOptions({ account, requestOptions, sessionId }) {
 
 async function consumeCompletionStream(stream, onDelta) {
   if (!stream) {
-    return;
+    return { searchResults: [] };
   }
 
   const decoder = new TextDecoder();
   const deltaDecoder = createDeepseekDeltaDecoder();
   const parser = createSseParser(({ data }) => {
-    const delta = deltaDecoder.consume(data);
-    if (delta?.text) {
-      onDelta(delta);
-    }
+    const decoded = deltaDecoder.consume(data);
+    const deltas = Array.isArray(decoded) ? decoded : (decoded ? [decoded] : []);
+    deltas.forEach((delta) => {
+      if (delta?.text) onDelta(delta);
+    });
   });
 
   for await (const chunk of stream) {
@@ -61,6 +62,7 @@ async function consumeCompletionStream(stream, onDelta) {
   }
 
   parser.flush();
+  return { searchResults: deltaDecoder.getSearchResults() };
 }
 
 async function withCompletionSession({ account, deleteAfterFinish, onComplete }) {
@@ -85,7 +87,7 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
       let content = "";
       let reasoningContent = "";
 
-      await consumeCompletionStream(response.body, (delta) => {
+      const { searchResults } = await consumeCompletionStream(response.body, (delta) => {
         if (delta.kind === "thinking") {
           reasoningContent += delta.text;
         } else {
@@ -93,7 +95,7 @@ export async function collectCompletionContent({ account, deleteAfterFinish = fa
         }
       });
 
-      return { content, reasoningContent };
+      return { content, reasoningContent, searchResults };
     }
   });
 }
@@ -111,7 +113,7 @@ export async function streamCompletionContent({
     onComplete: async (sessionId) => {
       const preparedOptions = await prepareRequestOptions({ account, requestOptions, sessionId });
       const { response } = await startCompletion({ account, requestOptions: preparedOptions, sessionId });
-      await consumeCompletionStream(response.body, (delta) => {
+      return consumeCompletionStream(response.body, (delta) => {
         if (onDelta) {
           onDelta(delta);
           return;
