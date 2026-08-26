@@ -72,15 +72,23 @@ export function createAppServices(options) {
 
   async function addAccount({ password, username }) {
     const deviceId = await getDeviceId();
+    const smsCode = String(password ?? "").trim();
+
+    if (!smsCode) {
+      await postJson("/api/accounts/sms-code", { username, deviceId });
+      return { sent: true };
+    }
+
     const payload = await postJson("/api/accounts", {
       username,
-      password,
+      smsCode,
       deviceId
     });
 
     els["account-password"].value = "";
     setAppState({ selectedAccountId: payload.account.id });
     await bootstrap();
+    return { account: payload.account, sent: false };
   }
 
   async function deleteAccount(accountId) {
