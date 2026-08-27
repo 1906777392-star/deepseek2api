@@ -15,6 +15,30 @@ function toStringSafe(value) {
   return value === null || value === undefined ? "" : String(value);
 }
 
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (!part || typeof part !== "object") return "";
+    return typeof part.text === "string" ? part.text
+      : typeof part.output_text === "string" ? part.output_text
+        : typeof part.content === "string" ? part.content
+          : "";
+  }).filter(Boolean).join("\n");
+}
+
+function contentHasImage(content) {
+  if (typeof content === "string") return /!\[[^\]]*]\(\s*(?:https?:\/\/|data:image\/)/i.test(content);
+  if (!Array.isArray(content)) return false;
+  return content.some((part) => {
+    if (!part || typeof part !== "object") return false;
+    if (part.type !== "image_url" && part.type !== "input_image" && part.type !== "image") return false;
+    const value = typeof part.image_url === "string" ? part.image_url
+      : part.image_url?.url ?? part.url ?? part.image ?? part.source?.url;
+    return Boolean(toStringSafe(value).trim());
+  });
+}
+
 function latestUserMessageIndex(messages) {
   for (let index = (messages?.length ?? 0) - 1; index >= 0; index -= 1) {
     if (toStringSafe(messages[index]?.role).toLowerCase() === "user") return index;
@@ -32,7 +56,9 @@ function toolCallsFromAssistant(message) {
 }
 
 function toolResultLooksSuccessful(message) {
-  const content = toStringSafe(message?.content).trim();
+  const content = contentText(message?.content).trim();
+  if (contentHasImage(message?.content)) return true;
+  if (/图片已生成|图像已生成|生成成功|处理完成|任务已完成/i.test(content)) return true;
   if (!content) return false;
   return !/(?:^|\b)(?:error|failed|failure)(?:\b|:)|失败|错误|未生成|没有生成/i.test(content);
 }

@@ -14,16 +14,36 @@ function toJsonText(value, fallback = "{}") {
 
 function toCdata(text) { return toStringSafe(text).replaceAll("]]>", "]]]]><![CDATA[>"); }
 
+function imageUrlFromPart(item) {
+  if (!item || typeof item !== "object") return "";
+  if (item.type !== "image_url" && item.type !== "input_image" && item.type !== "image") return "";
+  const value = typeof item.image_url === "string" ? item.image_url
+    : item.image_url?.url ?? item.url ?? item.image ?? item.source?.url;
+  return toStringSafe(value).trim();
+}
+
+function normalizeContentParts(content) {
+  if (typeof content === "string") return { text: content, imageUrls: [] };
+  if (!Array.isArray(content)) return { text: "", imageUrls: [] };
+  const textParts = [];
+  const imageUrls = [];
+  content.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    if (typeof item.text === "string") textParts.push(item.text);
+    else if (typeof item.output_text === "string") textParts.push(item.output_text);
+    else if (typeof item.content === "string") textParts.push(item.content);
+    const imageUrl = imageUrlFromPart(item);
+    if (imageUrl) imageUrls.push(imageUrl);
+  });
+  return { text: textParts.filter(Boolean).join("\n"), imageUrls: [...new Set(imageUrls)] };
+}
+
 function normalizeContentText(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((item) => {
-    if (!item || typeof item !== "object") return "";
-    if (typeof item.text === "string") return item.text;
-    if (typeof item.output_text === "string") return item.output_text;
-    if (typeof item.content === "string") return item.content;
-    return "";
-  }).filter(Boolean).join("\n");
+  const normalized = normalizeContentParts(content);
+  const markdownImages = normalized.imageUrls
+    .filter((url) => /^https?:\/\//i.test(url))
+    .map((url) => `![](${url})`);
+  return [normalized.text, ...markdownImages].filter(Boolean).join("\n");
 }
 
 function formatPromptToolCalls(toolCalls, toolNameById) {
@@ -48,9 +68,17 @@ function normalizeAssistantPromptContent(message, toolNameById) {
 }
 
 function normalizeToolPromptContent(message, toolNameById) {
-  const content = normalizeContentText(message?.content).trim() || "null";
+  const normalized = normalizeContentParts(message?.content);
+  const markdownImages = normalized.imageUrls
+    .filter((url) => /^https?:\/\//i.test(url))
+    .map((url) => `![](${url})`);
+  const content = [normalized.text.trim(), ...markdownImages].filter(Boolean).join("\n") || "null";
   const toolName = toolNameById.get(toStringSafe(message?.tool_call_id).trim()) || toStringSafe(message?.name).trim();
-  return toolName ? `Tool result for ${toolName}:\n${content}` : content;
+  const imageNotice = markdownImages.length
+    ? "The tool returned an actual image attachment. Treat the image operation as successful even if diagnostic text also mentions an upstream fallback, quota, credit, or 402 error. Present each image below to the user exactly once."
+    : "";
+  const result = [imageNotice, content].filter(Boolean).join("\n");
+  return toolName ? `Tool result for ${toolName}:\n${result}` : result;
 }
 
 function normalizeMessageRole(role) { return role === "developer" ? "system" : role; }
@@ -95,14 +123,15 @@ function buildToolPrompt(policy, tools) {
     "6) A successful tool result is authoritative: the action already happened. Do not repeat the same tool, and never regenerate an image merely because you cannot visually inspect it.",
     "7) After a successful image-generation or image-editing tool result, present that result and finish. Only inspect it with a declared image-viewing tool when the user explicitly asked for verification; never regenerate automatically after inspection.",
     "8) After a successful image-generation or image-editing tool result, include the returned image URL exactly once as Markdown image syntax on its own line: ![](IMAGE_URL). Do not repeat it as a bare URL.",
-    "9) Summarize only the user-relevant outcome. Do not narrate internal tool mechanics or copy diagnostic metadata from the tool result.",
-    "10) Never print transcript role labels such as SYSTEM:, USER:, ASSISTANT:, or TOOL:, and never quote tool-result turns into the visible answer.",
-    "11) Use only declared tool names and exact schema field names.",
-    "12) If you do not need a tool, answer normally without any XML."
+    "9) If a tool result contains an actual image attachment, that attachment proves success. Do not call it failed merely because the same result also contains a fallback-provider, quota, credit, Gem, or HTTP 402 warning.",
+    "10) Summarize only the user-relevant outcome. Do not narrate internal tool mechanics or copy diagnostic metadata from the tool result.",
+    "11) Never print transcript role labels such as SYSTEM:, USER:, ASSISTANT:, or TOOL:, and never quote tool-result turns into the visible answer.",
+    "12) Use only declared tool names and exact schema field names.",
+    "13) If you do not need a tool, answer normally without any XML."
   ].join("\n");
 
-  if (policy.mode === "required") prompt += "\n13) For this response, you MUST call at least one tool.";
-  if (policy.mode === "forced") prompt += `\n13) For this response, you MUST call exactly this tool: ${policy.forcedName}.`;
+  if (policy.mode === "required") prompt += "\n14) For this response, you MUST call at least one tool.";
+  if (policy.mode === "forced") prompt += `\n14) For this response, you MUST call exactly this tool: ${policy.forcedName}.`;
   return prompt;
 }
 

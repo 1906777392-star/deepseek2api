@@ -19,6 +19,25 @@ test("successful tool results block the same tool again in one user turn", () =>
   assert.deepEqual(filterToolsForRequest(tools, messages).map((tool) => tool.function.name), ["view_image", "check_job", "create_memory"]);
 });
 
+test("image attachment proves success even when result text contains a fallback quota error", () => {
+  const messages = [
+    { role: "user", content: "轻微重绘" },
+    { role: "assistant", tool_calls: [{ id: "call_redraw", type: "function", function: { name: "redraw", arguments: "{}" } }] },
+    {
+      role: "tool",
+      tool_call_id: "call_redraw",
+      name: "redraw",
+      content: [
+        { type: "text", text: "图片已生成。（公益站未用：no credit left (402) - Insufficient Gems balance）" },
+        { type: "image_url", image_url: { url: "https://img.example/redrawn.png" } }
+      ]
+    }
+  ];
+  const blocked = blockedToolNamesForRequest(messages);
+  assert.equal(blocked.has("redraw"), true);
+  assert.equal(blocked.has("draw"), true);
+});
+
 test("after one image inspection the same view tool is blocked but final answering remains possible", () => {
   const messages = [
     { role: "user", content: "画图并检查" },
