@@ -4,7 +4,7 @@ import { collectCompletionContent, streamCompletionContent } from "./openai-comp
 import { extractLatestUserImageContext } from "./openai-image-input.js";
 import { assertNoLegacySearchOptions, resolveOpenAiModel } from "./openai-request.js";
 import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js";
-import { filterToolsForRequest, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
+import { filterToolsForRequest, IMAGE_GENERATION_TOOL_NAMES, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
 import { buildOpenAiPrompt } from "./openai-tool-prompt.js";
 import { ensureToolChoiceSatisfied, hasChatToolingRequest } from "./openai-tool-policy.js";
 import { createOpenAiError } from "./openai-error.js";
@@ -25,7 +25,8 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   if ((imageContext.imageInputs.length || refFileIds.length) && model.supportsUploads === false) throw createOpenAiError(400, "Expert models do not support file or image uploads");
 
   const tools = toolCallsEnabled ? filterToolsForRequest(body?.tools ?? [], messages) : [];
-  const promptRequest = buildOpenAiPrompt({ messages, toolChoice: toolCallsEnabled ? body?.tool_choice : undefined, tools });
+  const requestedToolChoice = toolCallsEnabled && tools.length ? body?.tool_choice : undefined;
+  const promptRequest = buildOpenAiPrompt({ messages, toolChoice: requestedToolChoice, tools });
   return { model, prompt: promptRequest.prompt, imageInputs: imageContext.imageInputs, imageUserText: imageContext.userText, refFileIds, toolChoicePolicy: promptRequest.toolChoicePolicy, toolNames: promptRequest.toolNames };
 }
 
@@ -93,9 +94,9 @@ export async function streamOpenAiResponse(options) {
 
   const emitToolCalls = (calls) => {
     let filtered = limitImageGenerationCalls(calls);
-    if (emittedImageGeneration) filtered = filtered.filter((call) => !limitImageGenerationCalls([call]).some((entry) => entry === call && ["draw", "redraw", "photo_tool", "inpaint", "character_reference", "comic_page", "vibe_transfer", "character_panel"].includes(call.name)));
+    if (emittedImageGeneration) filtered = filtered.filter((call) => !IMAGE_GENERATION_TOOL_NAMES.has(call.name));
     if (!filtered.length) return;
-    if (filtered.some((call) => ["draw", "redraw", "photo_tool", "inpaint", "character_reference", "comic_page", "vibe_transfer", "character_panel"].includes(call.name))) emittedImageGeneration = true;
+    if (filtered.some((call) => IMAGE_GENERATION_TOOL_NAMES.has(call.name))) emittedImageGeneration = true;
     sawToolCall = true;
     writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { tool_calls: createChatToolCalls(filtered, toolCallIndex) }));
     toolCallIndex += filtered.length;
