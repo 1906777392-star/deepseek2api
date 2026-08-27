@@ -21,6 +21,19 @@ const searchTool = {
   }
 };
 
+const loginTool = {
+  type: "function",
+  function: {
+    name: "login",
+    description: "Login with the password supplied by the user",
+    parameters: {
+      type: "object",
+      properties: { password: { type: "string" }, invite_code: { type: "string" } },
+      required: ["password", "invite_code"]
+    }
+  }
+};
+
 test("tool image attachments become markdown output instructions", () => {
   const messages = [
     { role: "user", content: "轻微改一下" },
@@ -40,6 +53,19 @@ test("tool image attachments become markdown output instructions", () => {
   assert.match(result.prompt, /actual image attachment/i);
   assert.match(result.prompt, /!\[\]\(https:\/\/img\.example\/result\.png\)/);
   assert.match(result.prompt, /Treat the image operation as successful/i);
+});
+
+test("tool prompt identifies Kelivo and keeps secrets inside required tool parameters", () => {
+  const result = buildOpenAiPrompt({
+    messages: [{ role: "user", content: "这个就是密码" }],
+    tools: [loginTool, redrawTool],
+    toolChoice: "auto"
+  });
+  assert.match(result.prompt, /operating inside Kelivo/i);
+  assert.match(result.prompt, /pass it only inside that tool's required parameter/i);
+  assert.match(result.prompt, /call the same tool again with the supplied value/i);
+  assert.match(result.prompt, /Do not switch to an unrelated tool/i);
+  assert.match(result.prompt, /never replace a known value with an empty object/i);
 });
 
 test("forced tools receive an XML-first continuation cue", () => {
