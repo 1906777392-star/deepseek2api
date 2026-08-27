@@ -11,7 +11,17 @@ export function createAppServices(options) {
   async function changeAccount(accountId) { clearComposerInput(); setAppState({ currentMessageId: null, messages: [], selectedAccountId: accountId, selectedSessionId: "" }); view.renderShell(); await loadSessions(); }
   async function addAccount({ token, username }) { const normalizedToken = String(token ?? "").trim(); if (!normalizedToken) throw new Error("请粘贴 DeepSeek Bearer token"); const payload = await postJson("/api/accounts", { username: username || "DeepSeek", token: normalizedToken, deviceId: await getDeviceId() }); els["account-password"].value = ""; setAppState({ selectedAccountId: payload.account.id }); await bootstrap(); return { account: payload.account }; }
   async function deleteAccount(accountId) { setStatus(els["account-status"], "删除中..."); try { await requestJson(`/api/accounts/${accountId}`, { method: "DELETE" }); await bootstrap(); setStatus(els["account-status"], "已删除绑定账号。"); } catch (error) { setStatus(els["account-status"], error.message); } }
-  async function refreshAccountSettings(accountId) { await postJson(`/api/accounts/${accountId}/settings/refresh`, {}); await bootstrap(); }
+  async function refreshAccountSettings(accountId) {
+    try {
+      await postJson(`/api/accounts/${accountId}/settings/refresh`, {});
+    } catch (error) {
+      // The server persists the diagnostic even when DeepSeek rejects the report.
+      // Reload so the account card shows the real reason instead of stale status.
+      await bootstrap();
+      throw error;
+    }
+    await bootstrap();
+  }
   async function resolveCaptcha(accountId, payload) { await postJson(`/api/accounts/${accountId}/captcha/resolve`, payload); await bootstrap(); }
   async function retryCaptcha(accountId) { await postJson(`/api/accounts/${accountId}/captcha/retry`, {}); await bootstrap(); }
   async function clearCaptcha(accountId) { await postJson(`/api/accounts/${accountId}/captcha/clear`, {}); await bootstrap(); }
