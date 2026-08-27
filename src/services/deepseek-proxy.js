@@ -8,6 +8,7 @@ import {
 
 const preparedPowHeaders = new Map();
 const powHeaderInflight = new Map();
+const powCacheGenerations = new Map();
 
 function buildTargetUrl(path, query) {
   const url = new URL(resolveDeepseekApiPath(path), config.deepseekBaseUrl);
@@ -23,6 +24,17 @@ function buildTargetUrl(path, query) {
 
 function getPowCacheKey(account, path) {
   return `${account.id || account.deepseekUserId || account.loginValue}:${path}`;
+}
+
+function getPowCacheGeneration(key) {
+  return Number(powCacheGenerations.get(key) ?? 0);
+}
+
+function invalidatePowCache(account, path) {
+  const key = getPowCacheKey(account, path);
+  powCacheGenerations.set(key, getPowCacheGeneration(key) + 1);
+  preparedPowHeaders.delete(key);
+  powHeaderInflight.delete(key);
 }
 
 function isFreshPreparedHeader(entry) {
@@ -84,17 +96,29 @@ function prefetchPreparedPowHeader(account, path) {
   const key = getPowCacheKey(account, path);
   if (isFreshPreparedHeader(preparedPowHeaders.get(key)) || powHeaderInflight.has(key)) return;
 
+  const generation = getPowCacheGeneration(key);
   const promise = buildPreparedPowHeader(account, path)
     .then((entry) => {
-      if (isFreshPreparedHeader(entry)) preparedPowHeaders.set(key, entry);
+      if (generation === getPowCacheGeneration(key) && isFreshPreparedHeader(entry)) {
+        preparedPowHeaders.set(key, entry);
+      }
       return entry;
     })
-    .finally(() => powHeaderInflight.delete(key));
+    .finally(() => {
+      if (powHeaderInflight.get(key) === promise) powHeaderInflight.delete(key);
+    });
   powHeaderInflight.set(key, promise);
 }
 
-async function createPowHeader(account, path) {
+async function createPowHeader(account, path, { forceFresh = false } = {}) {
   const key = getPowCacheKey(account, path);
+  if (forceFresh) {
+    invalidatePowCache(account, path);
+    const entry = await buildPreparedPowHeader(account, path);
+    prefetchPreparedPowHeader(account, path);
+    return entry.value;
+  }
+
   const cached = preparedPowHeaders.get(key);
   if (isFreshPreparedHeader(cached)) {
     preparedPowHeaders.delete(key);
@@ -115,12 +139,14 @@ async function createPowHeader(account, path) {
   return entry.value;
 }
 
-async function performRequest({ account, method, path, query, body, headers }) {
+async function performRequest({ account, method, path, query, body, headers, forceFreshPow = false }) {
   const targetPath = resolveDeepseekApiPath(path);
   const finalHeaders = createBaseHeaders(account.token, headers);
 
   if (config.powProtectedPaths.has(targetPath)) {
-    finalHeaders["X-DS-PoW-Response"] = await createPowHeader(account, targetPath);
+    finalHeaders["X-DS-PoW-Response"] = await createPowHeader(account, targetPath, {
+      forceFresh: forceFreshPow
+    });
   }
 
   return fetch(buildTargetUrl(targetPath, query), {
@@ -131,6 +157,42 @@ async function performRequest({ account, method, path, query, body, headers }) {
       body,
       headers: finalHeaders
     })
+  });
+}
+
+export function isInvalidPowPayload(payloadText) {
+  return /INVALID_POW_RESPONSE/i.test(String(payloadText ?? ""));
+}
+
+async function inspectInvalidPowResponse(response) {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("text/event-stream")) {
+    return { invalid: false, response };
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const payloadText = buffer.toString("utf8");
+  return {
+    invalid: isInvalidPowPayload(payloadText),
+    response: new Response(buffer, {
+      headers: response.headers,
+      status: response.status
+    })
+  };
+}
+
+async function performRequestWithPowRetry(options) {
+  const targetPath = resolveDeepseekApiPath(options.path);
+  const firstResponse = await performRequest(options);
+  if (!config.powProtectedPaths.has(targetPath)) return firstResponse;
+
+  const inspected = await inspectInvalidPowResponse(firstResponse);
+  if (!inspected.invalid) return inspected.response;
+
+  invalidatePowCache(options.account, targetPath);
+  return performRequest({
+    ...options,
+    forceFreshPow: true
   });
 }
 
@@ -169,7 +231,7 @@ async function maybeRefreshAccount(response, account) {
 
 export async function proxyDeepseekRequest(options) {
   const { account } = options;
-  const initialResponse = await performRequest(options);
+  const initialResponse = await performRequestWithPowRetry(options);
   const firstPass = await maybeRefreshAccount(initialResponse, account);
 
   if (firstPass.response) {
@@ -184,7 +246,7 @@ export async function proxyDeepseekRequest(options) {
       };
     }
 
-    const retriedResponse = await performRequest({
+    const retriedResponse = await performRequestWithPowRetry({
       ...options,
       account: captchaPass.account
     });
@@ -194,7 +256,7 @@ export async function proxyDeepseekRequest(options) {
     };
   }
 
-  const retriedResponse = await performRequest({
+  const retriedResponse = await performRequestWithPowRetry({
     ...options,
     account: firstPass.refreshedAccount
   });
@@ -215,7 +277,7 @@ export async function proxyDeepseekRequest(options) {
     };
   }
 
-  const captchaRetriedResponse = await performRequest({
+  const captchaRetriedResponse = await performRequestWithPowRetry({
     ...options,
     account: captchaPass.account
   });
