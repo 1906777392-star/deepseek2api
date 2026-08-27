@@ -3,6 +3,14 @@ import { acquireChatSession, releaseChatSession } from "./chat-session-service.j
 import { uploadOpenAiVisionFiles } from "./deepseek-file-service.js";
 import { proxyDeepseekRequest } from "./deepseek-proxy.js";
 
+export class InvalidChatSessionError extends Error {
+  constructor() {
+    super("DeepSeek returned an invalid chat session id");
+    this.name = "InvalidChatSessionError";
+    this.code = "INVALID_CHAT_SESSION";
+  }
+}
+
 class EmptyCompletionError extends Error {
   constructor() { super("DeepSeek returned an empty completion"); this.name = "EmptyCompletionError"; }
 }
@@ -28,6 +36,7 @@ async function startCompletion({ account, requestOptions, sessionId, parentMessa
   const contentType = result.response.headers.get("content-type") ?? "";
   if (!result.response.ok || !contentType.includes("text/event-stream")) {
     const raw = await result.response.text();
+    if (/invalid\s+chat\s+session\s+id/i.test(raw)) throw new InvalidChatSessionError();
     let message = raw.slice(0, 500) || `HTTP ${result.response.status}`;
     try { const payload = JSON.parse(raw); message = payload?.data?.biz_msg || payload?.msg || payload?.error?.message || message; } catch {}
     throw new Error(`DeepSeek completion failed: ${message}`);
@@ -124,5 +133,5 @@ export async function streamCompletionContent({ account, deleteAfterFinish = fal
   const hasImages = Boolean(requestOptions.imageInputs?.length);
   if (hasImages) { onDelta?.({ kind: "thinking", text: "正在读取图片…\n" }); onText?.("正在读取图片…\n", "thinking"); }
   const finalRequestOptions = await prepareSelectedModelRequest({ account, requestOptions });
-  return runWithVisionRetry({ account, disposable: deleteAfterFinish, requestOptions: finalRequestOptions, onDelta: (delta) => { if (onDelta) onDelta(delta); else onText?.(delta.text, delta.kind); } });
+  return runWithVisionRetry({ account, disposable: deleteAfterFinish, onDelta: (delta) => { if (onDelta) onDelta(delta); else onText?.(delta.text, delta.kind); }, requestOptions: finalRequestOptions });
 }
