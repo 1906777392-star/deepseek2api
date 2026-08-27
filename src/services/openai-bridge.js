@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { collectCompletionContent, streamCompletionContent } from "./openai-completion-runner.js";
 import { extractLatestUserImageContext } from "./openai-image-input.js";
+import { formatCompletedImageToolResult, latestCompletedImageToolResult } from "./openai-image-result-finalizer.js";
 import { assertNoLegacySearchOptions, resolveOpenAiModel } from "./openai-request.js";
 import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js";
 import { filterToolsForRequest, IMAGE_GENERATION_TOOL_NAMES, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
@@ -105,6 +106,10 @@ function buildChatCompletionPayload(completionId, requestOptions, content, reaso
   return { id: completionId, object: "chat.completion", created: Math.floor(Date.now() / 1000), model: requestOptions.model.id, choices: [{ index: 0, finish_reason: "stop", message: withReasoning(baseMessage, parsed.reasoningContent) }] };
 }
 
+function buildDirectCompletionPayload(completionId, model, content) {
+  return { id: completionId, object: "chat.completion", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }] };
+}
+
 function buildChunkPayload(completionId, model, delta, finishReason) {
   return { id: completionId, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [finishReason ? { index: 0, delta: {}, finish_reason: finishReason } : { index: 0, delta }] };
 }
@@ -112,6 +117,11 @@ function writeSseChunk(response, payload) { response.write(`data: ${JSON.stringi
 function writeSseError(response, error) { response.write(`data: ${JSON.stringify({ error: { message: error?.message || "DeepSeek request failed", type: "server_error" } })}\n\n`); }
 
 export async function collectOpenAiResponse({ account, body, deleteAfterFinish = false, toolCallsEnabled = false }) {
+  const completedImage = latestCompletedImageToolResult(body?.messages ?? []);
+  if (completedImage) {
+    const model = resolveOpenAiModel(body?.model);
+    return buildDirectCompletionPayload(createCompletionId(), model.id, formatCompletedImageToolResult(completedImage));
+  }
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
   const { content, reasoningContent, searchResults } = await collectCompletionContent({ account, deleteAfterFinish, requestOptions });
   return buildChatCompletionPayload(createCompletionId(), requestOptions, content, reasoningContent, searchResults);
@@ -120,6 +130,18 @@ export async function collectOpenAiResponse({ account, body, deleteAfterFinish =
 export async function streamOpenAiResponse(options) {
   const { account, body, deleteAfterFinish = false, response, toolCallsEnabled = false } = options;
   const completionId = createCompletionId();
+  const completedImage = latestCompletedImageToolResult(body?.messages ?? []);
+  if (completedImage) {
+    const model = resolveOpenAiModel(body?.model);
+    response.writeHead(200, { "cache-control": "no-cache, no-transform", connection: "keep-alive", "content-type": "text/event-stream; charset=utf-8", "x-accel-buffering": "no" });
+    response.flushHeaders?.();
+    writeSseChunk(response, buildChunkPayload(completionId, model.id, { role: "assistant" }));
+    writeSseChunk(response, buildChunkPayload(completionId, model.id, { content: formatCompletedImageToolResult(completedImage) }));
+    writeSseChunk(response, buildChunkPayload(completionId, model.id, {}, "stop"));
+    response.end("data: [DONE]\n\n");
+    return;
+  }
+
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   const transcriptRouter = createTranscriptLeakRouter();
