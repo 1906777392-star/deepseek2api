@@ -5,6 +5,7 @@ import { extractLatestUserImageContext } from "./openai-image-input.js";
 import { formatCompletedImageToolResult, latestCompletedImageToolResult } from "./openai-image-result-finalizer.js";
 import { assertNoLegacySearchOptions, resolveOpenAiModel } from "./openai-request.js";
 import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js";
+import { inferToolChoiceForRequest } from "./openai-tool-choice-inference.js";
 import { filterToolsForRequest, IMAGE_GENERATION_TOOL_NAMES, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
 import { buildOpenAiPrompt } from "./openai-tool-prompt.js";
 import { ensureToolChoiceSatisfied, getToolName, hasChatToolingRequest } from "./openai-tool-policy.js";
@@ -58,7 +59,7 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   if ((imageContext.imageInputs.length || refFileIds.length) && model.supportsUploads === false) throw createOpenAiError(400, "Expert models do not support file or image uploads");
 
   const tools = toolCallsEnabled ? filterToolsForRequest(body?.tools ?? [], messages) : [];
-  const requestedToolChoice = toolCallsEnabled && tools.length ? inferToolChoice(messages, tools, body?.tool_choice) : undefined;
+  const requestedToolChoice = toolCallsEnabled && tools.length ? inferToolChoiceForRequest(messages, tools, body?.tool_choice) : undefined;
   const promptRequest = buildOpenAiPrompt({ messages, toolChoice: requestedToolChoice, tools });
   return { model, prompt: promptRequest.prompt, imageInputs: imageContext.imageInputs, imageUserText: imageContext.userText, refFileIds, toolChoicePolicy: promptRequest.toolChoicePolicy, toolNames: promptRequest.toolNames };
 }
