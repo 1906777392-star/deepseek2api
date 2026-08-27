@@ -14,6 +14,10 @@ function latestUserText(messages = []) {
   return "";
 }
 
+function latestMessageRole(messages = []) {
+  return String(messages.at(-1)?.role ?? "").toLowerCase();
+}
+
 function forced(name) {
   return { type: "function", function: { name } };
 }
@@ -31,6 +35,12 @@ function isImageIntent(text) {
 }
 
 export function inferToolChoiceForRequest(messages, tools, suppliedChoice) {
+  // A tool result is a continuation of the already-started request. Some
+  // clients resend tool_choice=required/forced on every loop iteration, so
+  // this check must happen before accepting the supplied choice.
+  const role = latestMessageRole(messages);
+  if (role === "tool" || role === "function") return "auto";
+
   if (suppliedChoice !== undefined && suppliedChoice !== null && suppliedChoice !== "auto") return suppliedChoice;
 
   const names = [...new Set((tools ?? []).map(getToolName).filter(Boolean))];
