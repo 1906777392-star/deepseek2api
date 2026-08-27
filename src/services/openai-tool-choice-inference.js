@@ -14,6 +14,10 @@ function latestUserText(messages = []) {
   return "";
 }
 
+function latestMessageRole(messages = []) {
+  return String(messages.at(-1)?.role ?? "").toLowerCase();
+}
+
 function forced(name) {
   return { type: "function", function: { name } };
 }
@@ -35,6 +39,11 @@ export function inferToolChoiceForRequest(messages, tools, suppliedChoice) {
 
   const names = [...new Set((tools ?? []).map(getToolName).filter(Boolean))];
   if (!names.length) return suppliedChoice;
+
+  // A tool result is a continuation of the already-started request. Do not
+  // re-infer intent from the older user message and start the same tool again.
+  const role = latestMessageRole(messages);
+  if (role === "tool" || role === "function") return "auto";
 
   const userText = latestUserText(messages);
   if (isToolIntent(userText)) {
