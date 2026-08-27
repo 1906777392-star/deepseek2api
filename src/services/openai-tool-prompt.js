@@ -146,17 +146,23 @@ function injectToolPrompt(messages, tools, policy) {
   return updated;
 }
 
-function appendAssistantContinuationCue(prompt) {
+function appendAssistantContinuationCue(prompt, policy) {
+  const requiredCue = policy.mode === "forced"
+    ? `SYSTEM: Your next response must begin immediately with <tool_calls> and contain a valid call to ${policy.forcedName}. Do not discuss, plan, promise, simulate, or describe the call. Output the raw XML call now.`
+    : policy.mode === "required"
+      ? "SYSTEM: Your next response must begin immediately with <tool_calls> and contain at least one valid declared tool call. Do not discuss, plan, promise, simulate, or describe the call. Output the raw XML call now."
+      : "";
   return [
     prompt,
     "SYSTEM: Return only the next assistant response. Do not repeat transcript history or role labels.",
+    requiredCue,
     "ASSISTANT:"
-  ].join("\n\n");
+  ].filter(Boolean).join("\n\n");
 }
 
 export function buildOpenAiPrompt({ messages, toolChoice, tools }) {
   const policy = resolveToolChoicePolicy({ tools, toolChoice });
   const normalizedMessages = normalizeMessagesForPrompt(messages);
   const promptMessages = injectToolPrompt(normalizedMessages, tools ?? [], policy);
-  return { prompt: appendAssistantContinuationCue(buildPromptFromMessages(promptMessages)), toolChoicePolicy: policy, toolNames: policy.allowedToolNames };
+  return { prompt: appendAssistantContinuationCue(buildPromptFromMessages(promptMessages), policy), toolChoicePolicy: policy, toolNames: policy.allowedToolNames };
 }
