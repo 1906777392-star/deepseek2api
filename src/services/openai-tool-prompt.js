@@ -96,12 +96,13 @@ function buildToolPrompt(policy, tools) {
     "7) After a successful image-generation or image-editing tool result, present that result and finish. Only inspect it with a declared image-viewing tool when the user explicitly asked for verification; never regenerate automatically after inspection.",
     "8) After a successful image-generation or image-editing tool result, include the returned image URL exactly once as Markdown image syntax on its own line: ![](IMAGE_URL). Do not repeat it as a bare URL.",
     "9) Summarize only the user-relevant outcome. Do not narrate internal tool mechanics or copy diagnostic metadata from the tool result.",
-    "10) Use only declared tool names and exact schema field names.",
-    "11) If you do not need a tool, answer normally without any XML."
+    "10) Never print transcript role labels such as SYSTEM:, USER:, ASSISTANT:, or TOOL:, and never quote tool-result turns into the visible answer.",
+    "11) Use only declared tool names and exact schema field names.",
+    "12) If you do not need a tool, answer normally without any XML."
   ].join("\n");
 
-  if (policy.mode === "required") prompt += "\n12) For this response, you MUST call at least one tool.";
-  if (policy.mode === "forced") prompt += `\n12) For this response, you MUST call exactly this tool: ${policy.forcedName}.`;
+  if (policy.mode === "required") prompt += "\n13) For this response, you MUST call at least one tool.";
+  if (policy.mode === "forced") prompt += `\n13) For this response, you MUST call exactly this tool: ${policy.forcedName}.`;
   return prompt;
 }
 
@@ -116,9 +117,17 @@ function injectToolPrompt(messages, tools, policy) {
   return updated;
 }
 
+function appendAssistantContinuationCue(prompt) {
+  return [
+    prompt,
+    "SYSTEM: Return only the next assistant response. Do not repeat transcript history or role labels.",
+    "ASSISTANT:"
+  ].join("\n\n");
+}
+
 export function buildOpenAiPrompt({ messages, toolChoice, tools }) {
   const policy = resolveToolChoicePolicy({ tools, toolChoice });
   const normalizedMessages = normalizeMessagesForPrompt(messages);
   const promptMessages = injectToolPrompt(normalizedMessages, tools ?? [], policy);
-  return { prompt: buildPromptFromMessages(promptMessages), toolChoicePolicy: policy, toolNames: policy.allowedToolNames };
+  return { prompt: appendAssistantContinuationCue(buildPromptFromMessages(promptMessages)), toolChoicePolicy: policy, toolNames: policy.allowedToolNames };
 }

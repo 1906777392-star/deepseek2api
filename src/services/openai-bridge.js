@@ -7,6 +7,7 @@ import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js"
 import { filterToolsForRequest, IMAGE_GENERATION_TOOL_NAMES, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
 import { buildOpenAiPrompt } from "./openai-tool-prompt.js";
 import { ensureToolChoiceSatisfied, hasChatToolingRequest } from "./openai-tool-policy.js";
+import { createTranscriptLeakRouter, splitLeakedTranscript } from "./openai-transcript-sanitizer.js";
 import { createOpenAiError } from "./openai-error.js";
 
 function createCompletionId() { return `chatcmpl_${randomUUID()}`; }
@@ -54,11 +55,15 @@ function withReasoning(message, reasoningContent) { const safe = redactSensitive
 function dedupeToolCalls(calls) { const seen = new Set(); return (calls ?? []).filter((call) => { const key = `${call?.name ?? ""}\u0000${call?.argumentsText ?? ""}`; if (seen.has(key)) return false; seen.add(key); return true; }); }
 
 function parseCollectedToolOutput(content, reasoningContent, toolNames) {
-  if (!toolNames.length) return { content, reasoningContent, toolCalls: [] };
+  if (!toolNames.length) {
+    const leak = splitLeakedTranscript(content);
+    return { content: leak.visible, reasoningContent: `${reasoningContent}${leak.reasoning}`, toolCalls: [] };
+  }
   const visible = extractToolAwareOutput(content, toolNames);
   const reasoning = extractToolAwareOutput(reasoningContent, toolNames);
   const joined = extractToolAwareOutput(`${reasoningContent}${content}`, toolNames);
-  return { content: visible.content, reasoningContent: reasoning.content, toolCalls: limitImageGenerationCalls(dedupeToolCalls([...visible.toolCalls, ...reasoning.toolCalls, ...joined.toolCalls])) };
+  const leak = splitLeakedTranscript(visible.content);
+  return { content: leak.visible, reasoningContent: `${reasoning.content}${leak.reasoning}`, toolCalls: limitImageGenerationCalls(dedupeToolCalls([...visible.toolCalls, ...reasoning.toolCalls, ...joined.toolCalls])) };
 }
 
 function buildChatCompletionPayload(completionId, requestOptions, content, reasoningContent, searchResults) {
@@ -86,6 +91,7 @@ export async function streamOpenAiResponse(options) {
   const completionId = createCompletionId();
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
+  const transcriptRouter = createTranscriptLeakRouter();
   let toolCallIndex = 0; let sawToolCall = false; let emittedImageGeneration = false; let lastRoutedKind = "response";
 
   response.writeHead(200, { "cache-control": "no-cache, no-transform", connection: "keep-alive", "content-type": "text/event-stream; charset=utf-8", "x-accel-buffering": "no" });
@@ -105,12 +111,17 @@ export async function streamOpenAiResponse(options) {
   const emitReasoningText = (text) => { if (text) writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { reasoning_content: text })); };
   const reasoningRedactor = createStreamingReasoningRedactor(emitReasoningText);
   const emitPlainText = (kind, text) => { if (!text) return; if (kind === "thinking") { reasoningRedactor.push(text); return; } reasoningRedactor.flush(); writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text })); };
-  const routeToolAwareText = (kind, text) => { if (!text) return; lastRoutedKind = kind; if (!toolSieve) { emitPlainText(kind, text); return; } toolSieve.push(text).forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitPlainText(kind, event.text); }); };
+  const emitRoutedText = (kind, text) => {
+    if (kind === "thinking") { emitPlainText(kind, text); return; }
+    transcriptRouter.push(text).forEach((event) => emitPlainText(event.kind, event.text));
+  };
+  const routeToolAwareText = (kind, text) => { if (!text) return; lastRoutedKind = kind; if (!toolSieve) { emitRoutedText(kind, text); return; } toolSieve.push(text).forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitRoutedText(kind, event.text); }); };
 
   try {
     const { searchResults } = await streamCompletionContent({ account, deleteAfterFinish, onDelta: (delta) => routeToolAwareText(delta.kind, delta.text), requestOptions });
     routeToolAwareText("response", formatSearchSources(searchResults));
-    if (toolSieve) toolSieve.flush().forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitPlainText(lastRoutedKind, event.text); });
+    if (toolSieve) toolSieve.flush().forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitRoutedText(lastRoutedKind, event.text); });
+    transcriptRouter.flush().forEach((event) => emitPlainText(event.kind, event.text));
     reasoningRedactor.flush();
     writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, {}, sawToolCall ? "tool_calls" : "stop"));
   } catch (error) { writeSseError(response, error); }
