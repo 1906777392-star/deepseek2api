@@ -6,13 +6,44 @@ import { assertNoLegacySearchOptions, resolveOpenAiModel } from "./openai-reques
 import { createToolSieve, extractToolAwareOutput } from "./openai-tool-sieve.js";
 import { filterToolsForRequest, IMAGE_GENERATION_TOOL_NAMES, limitImageGenerationCalls } from "./openai-tool-loop-guard.js";
 import { buildOpenAiPrompt } from "./openai-tool-prompt.js";
-import { ensureToolChoiceSatisfied, hasChatToolingRequest } from "./openai-tool-policy.js";
+import { ensureToolChoiceSatisfied, getToolName, hasChatToolingRequest } from "./openai-tool-policy.js";
 import { createTranscriptLeakRouter, splitLeakedTranscript } from "./openai-transcript-sanitizer.js";
 import { createOpenAiError } from "./openai-error.js";
 
 function createCompletionId() { return `chatcmpl_${randomUUID()}`; }
 function createChatToolCalls(calls, startIndex = 0) {
   return calls.map((call, offset) => ({ index: startIndex + offset, id: call.id, type: "function", function: { name: call.name, arguments: call.argumentsText } }));
+}
+
+function messageText(message) {
+  if (typeof message?.content === "string") return message.content;
+  if (!Array.isArray(message?.content)) return "";
+  return message.content.map((part) => part?.text ?? part?.output_text ?? part?.content ?? "").filter(Boolean).join("\n");
+}
+
+function latestUserText(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (String(messages[index]?.role ?? "").toLowerCase() === "user") return messageText(messages[index]).trim();
+  }
+  return "";
+}
+
+function recentConversationText(messages = [], count = 4) {
+  return messages.slice(-count).map(messageText).filter(Boolean).join("\n");
+}
+
+function inferToolChoice(messages, tools, suppliedChoice) {
+  if (suppliedChoice !== undefined && suppliedChoice !== null && suppliedChoice !== "auto") return suppliedChoice;
+  const names = new Set(tools.map(getToolName));
+  const userText = latestUserText(messages);
+  const explicitImageAction = /(?:再来|再画|重画|重新画|生成|画一张|画张|出一张|换一张|改图|重绘|继续画)/i.test(userText);
+  if (!explicitImageAction || ![...names].some((name) => IMAGE_GENERATION_TOOL_NAMES.has(name))) return suppliedChoice;
+
+  const context = recentConversationText(messages);
+  if (names.has("character_reference") && /(?:角色参考|长相锚点|保持角色|同一角色|外貌一致|定妆照)/i.test(context)) {
+    return { type: "function", function: { name: "character_reference" } };
+  }
+  return "required";
 }
 
 function resolveCompletionRequest(body, toolCallsEnabled) {
@@ -26,7 +57,7 @@ function resolveCompletionRequest(body, toolCallsEnabled) {
   if ((imageContext.imageInputs.length || refFileIds.length) && model.supportsUploads === false) throw createOpenAiError(400, "Expert models do not support file or image uploads");
 
   const tools = toolCallsEnabled ? filterToolsForRequest(body?.tools ?? [], messages) : [];
-  const requestedToolChoice = toolCallsEnabled && tools.length ? body?.tool_choice : undefined;
+  const requestedToolChoice = toolCallsEnabled && tools.length ? inferToolChoice(messages, tools, body?.tool_choice) : undefined;
   const promptRequest = buildOpenAiPrompt({ messages, toolChoice: requestedToolChoice, tools });
   return { model, prompt: promptRequest.prompt, imageInputs: imageContext.imageInputs, imageUserText: imageContext.userText, refFileIds, toolChoicePolicy: promptRequest.toolChoicePolicy, toolNames: promptRequest.toolNames };
 }
@@ -92,21 +123,12 @@ export async function streamOpenAiResponse(options) {
   const requestOptions = resolveCompletionRequest(body, toolCallsEnabled);
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null;
   const transcriptRouter = createTranscriptLeakRouter();
-  let toolCallIndex = 0; let sawToolCall = false; let emittedImageGeneration = false; let lastRoutedKind = "response";
+  const toolRequired = requestOptions.toolChoicePolicy.mode === "required" || requestOptions.toolChoicePolicy.mode === "forced";
+  let toolCallIndex = 0; let sawToolCall = false; let emittedImageGeneration = false; let lastRoutedKind = "response"; let pendingRequiredText = "";
 
   response.writeHead(200, { "cache-control": "no-cache, no-transform", connection: "keep-alive", "content-type": "text/event-stream; charset=utf-8", "x-accel-buffering": "no" });
   response.flushHeaders?.();
   writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { role: "assistant" }));
-
-  const emitToolCalls = (calls) => {
-    let filtered = limitImageGenerationCalls(calls);
-    if (emittedImageGeneration) filtered = filtered.filter((call) => !IMAGE_GENERATION_TOOL_NAMES.has(call.name));
-    if (!filtered.length) return;
-    if (filtered.some((call) => IMAGE_GENERATION_TOOL_NAMES.has(call.name))) emittedImageGeneration = true;
-    sawToolCall = true;
-    writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { tool_calls: createChatToolCalls(filtered, toolCallIndex) }));
-    toolCallIndex += filtered.length;
-  };
 
   const emitReasoningText = (text) => { if (text) writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { reasoning_content: text })); };
   const reasoningRedactor = createStreamingReasoningRedactor(emitReasoningText);
@@ -115,12 +137,38 @@ export async function streamOpenAiResponse(options) {
     if (kind === "thinking") { emitPlainText(kind, text); return; }
     transcriptRouter.push(text).forEach((event) => emitPlainText(event.kind, event.text));
   };
-  const routeToolAwareText = (kind, text) => { if (!text) return; lastRoutedKind = kind; if (!toolSieve) { emitRoutedText(kind, text); return; } toolSieve.push(text).forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitRoutedText(kind, event.text); }); };
+
+  const emitToolCalls = (calls) => {
+    let filtered = limitImageGenerationCalls(calls);
+    if (emittedImageGeneration) filtered = filtered.filter((call) => !IMAGE_GENERATION_TOOL_NAMES.has(call.name));
+    if (!filtered.length) return;
+    if (pendingRequiredText) {
+      emitRoutedText("response", pendingRequiredText);
+      pendingRequiredText = "";
+    }
+    if (filtered.some((call) => IMAGE_GENERATION_TOOL_NAMES.has(call.name))) emittedImageGeneration = true;
+    sawToolCall = true;
+    writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { tool_calls: createChatToolCalls(filtered, toolCallIndex) }));
+    toolCallIndex += filtered.length;
+  };
+
+  const routeVisibleText = (kind, text) => {
+    if (toolRequired && !sawToolCall && kind !== "thinking") {
+      pendingRequiredText += text;
+      return;
+    }
+    emitRoutedText(kind, text);
+  };
+  const routeToolAwareText = (kind, text) => { if (!text) return; lastRoutedKind = kind; if (!toolSieve) { routeVisibleText(kind, text); return; } toolSieve.push(text).forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) routeVisibleText(kind, event.text); }); };
 
   try {
     const { searchResults } = await streamCompletionContent({ account, deleteAfterFinish, onDelta: (delta) => routeToolAwareText(delta.kind, delta.text), requestOptions });
     routeToolAwareText("response", formatSearchSources(searchResults));
-    if (toolSieve) toolSieve.flush().forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) emitRoutedText(lastRoutedKind, event.text); });
+    if (toolSieve) toolSieve.flush().forEach((event) => { if (event.type === "tool_calls") emitToolCalls(event.calls ?? []); else if (event.text) routeVisibleText(lastRoutedKind, event.text); });
+    if (toolRequired && !sawToolCall) {
+      pendingRequiredText = "";
+      throw createOpenAiError(422, "The model did not produce the required tool call. Please retry this request.", "tool_choice_violation");
+    }
     transcriptRouter.flush().forEach((event) => emitPlainText(event.kind, event.text));
     reasoningRedactor.flush();
     writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, {}, sawToolCall ? "tool_calls" : "stop"));

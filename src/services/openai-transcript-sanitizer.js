@@ -11,6 +11,12 @@ function assistantTranscriptText(line) {
   return match ? match[1] : null;
 }
 
+function removePlaceholderImages(value) {
+  return String(value ?? "")
+    .replace(/!\[[^\]]*]\(\s*(?:IMAGE_URL|IMAGE_LINK|图片链接|图片URL)\s*\)/gi, "")
+    .replace(/<img\b[^>]*\bsrc=["']?(?:IMAGE_URL|IMAGE_LINK|图片链接|图片URL)["']?[^>]*>/gi, "");
+}
+
 export function splitLeakedTranscript(value) {
   const lines = String(value ?? "").split(/(?<=\n)/);
   let mode = "visible";
@@ -25,7 +31,7 @@ export function splitLeakedTranscript(value) {
         mode = "tool";
         continue;
       }
-      visible += rawLine;
+      visible += removePlaceholderImages(rawLine);
       continue;
     }
     if (mode === "tool") {
@@ -59,7 +65,8 @@ export function createTranscriptLeakRouter() {
         mode = "tool";
         return [];
       }
-      return rawLine ? [{ kind: "response", text: rawLine }] : [];
+      const safe = removePlaceholderImages(rawLine);
+      return safe ? [{ kind: "response", text: safe }] : [];
     }
     if (mode === "tool") {
       const assistantText = assistantTranscriptText(line);
