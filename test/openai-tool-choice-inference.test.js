@@ -3,26 +3,28 @@ import test from "node:test";
 
 import { inferToolChoiceForRequest } from "../src/services/openai-tool-choice-inference.js";
 
-const searchTools = ["search_web", "create_memory"].map((name) => ({ type: "function", function: { name, parameters: { type: "object" } } }));
+const tools = ["search_web", "draw", "create_memory"].map((name) => ({ type: "function", function: { name, parameters: { type: "object" } } }));
 function forced(name) { return { type: "function", function: { name } }; }
 
-function completedSearchMessages() {
+function completedToolMessages() {
   return [
     { role: "user", content: "找一些好玩的 MCP" },
-    { role: "assistant", tool_calls: [{ id: "call_1", type: "function", function: { name: "search_web", arguments: "{\"query\":\"fun MCP servers\"}" } }] },
-    { role: "tool", tool_call_id: "call_1", name: "search_web", content: "search results" }
+    { role: "assistant", tool_calls: [{ id: "call_1", type: "function", function: { name: "search_web", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_1", name: "search_web", content: "results" }
   ];
 }
 
-test("MCP discovery still forces a concrete search tool on a fresh user request", () => {
-  assert.deepEqual(inferToolChoiceForRequest([{ role: "user", content: "找一些好玩的 MCP" }], searchTools, "auto"), forced("search_web"));
+test("fresh requests stay auto regardless of search or image keywords", () => {
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "找一些好玩的 MCP" }], tools, "auto"), "auto");
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "画一张猫" }], tools, undefined), "auto");
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "我不想逆向" }], tools, "auto"), "auto");
 });
 
-test("a tool result continues normally instead of forcing the same search again", () => {
-  assert.equal(inferToolChoiceForRequest(completedSearchMessages(), searchTools, "auto"), "auto");
+test("an explicitly supplied forced choice is preserved on a fresh turn", () => {
+  assert.deepEqual(inferToolChoiceForRequest([{ role: "user", content: "调用 search_web" }], tools, forced("search_web")), forced("search_web"));
 });
 
-test("a tool result overrides clients that resend required tool_choice", () => {
-  assert.equal(inferToolChoiceForRequest(completedSearchMessages(), searchTools, "required"), "auto");
-  assert.equal(inferToolChoiceForRequest(completedSearchMessages(), searchTools, forced("search_web")), "auto");
+test("tool results override stale required or forced choices from the client", () => {
+  assert.equal(inferToolChoiceForRequest(completedToolMessages(), tools, "required"), "auto");
+  assert.equal(inferToolChoiceForRequest(completedToolMessages(), tools, forced("search_web")), "auto");
 });
