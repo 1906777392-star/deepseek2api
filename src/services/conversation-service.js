@@ -58,6 +58,15 @@ export function saveConversationState({ ownerId, apiKeyId, accountId, conversati
   });
 }
 
+export function clearConversationState({ ownerId, apiKeyId, accountId, conversationId }) {
+  if (!conversationId) return;
+  const key = conversationKey(ownerId, apiKeyId, accountId, conversationId);
+  updateStore((state) => ({
+    ...state,
+    conversations: (state.conversations ?? []).filter((item) => item.key !== key)
+  }));
+}
+
 export function createConversationId() {
   return randomUUID();
 }
