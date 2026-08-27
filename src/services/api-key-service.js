@@ -1,6 +1,17 @@
 import { readStore, updateStore } from "../storage/store.js";
 import { createApiKey, createId, hashValue } from "../utils/id.js";
 
+export const API_KEY_ACCOUNT_MODES = Object.freeze({
+  FIXED: "fixed",
+  ROUND_ROBIN: "round_robin"
+});
+
+export function normalizeApiKeyAccountMode(value) {
+  return value === API_KEY_ACCOUNT_MODES.ROUND_ROBIN
+    ? API_KEY_ACCOUNT_MODES.ROUND_ROBIN
+    : API_KEY_ACCOUNT_MODES.FIXED;
+}
+
 function sanitizeKey(record) {
   const { keyHash, ...rest } = record;
   return rest;
@@ -17,13 +28,15 @@ export function createApiKeyRecord({
   accountId,
   label,
   plainKey,
-  toolCallsEnabled = false
+  toolCallsEnabled = false,
+  accountMode = API_KEY_ACCOUNT_MODES.FIXED
 }) {
   const key = plainKey || createApiKey();
   const record = {
     id: createId(),
     ownerId,
     accountId,
+    accountMode: normalizeApiKeyAccountMode(accountMode),
     label,
     key,
     keyHash: hashValue(key),
@@ -37,10 +50,7 @@ export function createApiKeyRecord({
     apiKeys: [...state.apiKeys, record]
   }));
 
-  return {
-    key,
-    record: sanitizeKey(record)
-  };
+  return { key, record: sanitizeKey(record) };
 }
 
 export function deleteApiKeyRecord(ownerId, keyId) {
@@ -52,19 +62,17 @@ export function deleteApiKeyRecord(ownerId, keyId) {
   }));
 }
 
-export function updateApiKeyRecord(ownerId, keyId, patch) {
+export function updateApiKeyRecord(ownerId, keyId, patch = {}) {
   let updatedRecord = null;
 
   updateStore((state) => ({
     ...state,
     apiKeys: state.apiKeys.map((record) => {
-      if (record.id !== keyId || record.ownerId !== ownerId) {
-        return record;
-      }
-
+      if (record.id !== keyId || record.ownerId !== ownerId) return record;
       updatedRecord = {
         ...record,
-        toolCallsEnabled: Boolean(patch?.toolCallsEnabled)
+        ...(patch.toolCallsEnabled === undefined ? {} : { toolCallsEnabled: Boolean(patch.toolCallsEnabled) }),
+        ...(patch.accountMode === undefined ? {} : { accountMode: normalizeApiKeyAccountMode(patch.accountMode) })
       };
       return updatedRecord;
     })
