@@ -1,224 +1,27 @@
 export function createSseParser(onEvent) {
-  let buffer = "";
-  let eventName = "message";
-  let dataLines = [];
-
-  function emit() {
-    if (!dataLines.length) {
-      eventName = "message";
-      return;
-    }
-
-    onEvent({
-      event: eventName,
-      data: dataLines.join("\n")
-    });
-
-    eventName = "message";
-    dataLines = [];
-  }
-
-  return {
-    push(chunk) {
-      buffer += chunk;
-
-      while (buffer.includes("\n")) {
-        const index = buffer.indexOf("\n");
-        const line = buffer.slice(0, index).replace(/\r$/, "");
-        buffer = buffer.slice(index + 1);
-
-        if (!line) {
-          emit();
-          continue;
-        }
-
-        if (line.startsWith("event:")) {
-          eventName = line.slice(6).trim();
-          continue;
-        }
-
-        if (line.startsWith("data:")) {
-          dataLines.push(line.slice(5).trimStart());
-        }
-      }
-    },
-    flush() {
-      if (buffer.trim()) {
-        dataLines.push(buffer.trim());
-        buffer = "";
-      }
-
-      emit();
-    }
-  };
+  let buffer = ""; let eventName = "message"; let dataLines = [];
+  function emit() { if (!dataLines.length) { eventName = "message"; return; } onEvent({ event: eventName, data: dataLines.join("\n") }); eventName = "message"; dataLines = []; }
+  return { push(chunk) { buffer += chunk; while (buffer.includes("\n")) { const index = buffer.indexOf("\n"); const line = buffer.slice(0, index).replace(/\r$/, ""); buffer = buffer.slice(index + 1); if (!line) { emit(); continue; } if (line.startsWith("event:")) { eventName = line.slice(6).trim(); continue; } if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart()); } }, flush() { if (buffer.trim()) { dataLines.push(buffer.trim()); buffer = ""; } emit(); } };
 }
-
-const FRAGMENT_KIND_BY_TYPE = Object.freeze({
-  THINK: "thinking",
-  THINKING: "thinking",
-  REASONING: "thinking",
-  RESPONSE: "response",
-  ANSWER: "response",
-  FINAL: "response",
-  FINAL_ANSWER: "response",
-  TEXT: "response",
-  VISION: "response",
-  VISION_RESPONSE: "response"
-});
-
-function resolveFragmentKind(type) {
-  return FRAGMENT_KIND_BY_TYPE[String(type ?? "").toUpperCase()] ?? null;
-}
-
-function joinPath(parent, child) {
-  if (!parent) return child || "";
-  if (!child) return parent;
-  return `${parent.replace(/\/$/, "")}/${String(child).replace(/^\//, "")}`;
-}
-
-function flattenOperations(payload, inherited = { path: "", op: "SET" }) {
-  const path = payload?.p ?? inherited.path;
-  const op = payload?.o ?? inherited.op;
-
-  if (op !== "BATCH" || !Array.isArray(payload?.v)) {
-    return [{ path, op, value: payload?.v }];
-  }
-
-  const childState = { path: "", op: "SET" };
-  return payload.v.flatMap((item) => {
-    const childPath = item?.p ?? childState.path;
-    const childOp = item?.o ?? childState.op;
-    childState.path = childPath;
-    childState.op = childOp;
-    return flattenOperations(
-      { ...item, p: joinPath(path, childPath), o: childOp },
-      { path: joinPath(path, childPath), op: childOp }
-    );
-  });
-}
-
-function stripReferenceMarkers(text) {
-  return String(text ?? "")
-    .replace(/\s*\[reference:\d+\]/gi, "")
-    .replace(/\s*\[citation:[^\]\r\n]+\]/gi, "");
-}
-
-function collectSearchResult(result, output, seen) {
-  if (!result || typeof result !== "object") return;
-  const url = typeof result.url === "string" ? result.url.trim() : "";
-  if (!url || seen.has(url)) return;
-  seen.add(url);
-  output.push({
-    url,
-    title: typeof result.title === "string" ? result.title.trim() : "",
-    siteName: typeof result.site_name === "string" ? result.site_name.trim() : "",
-    snippet: typeof result.snippet === "string" ? result.snippet.trim() : ""
-  });
-}
-
-function collectSearchResults(value, output, seen, depth = 0) {
-  if (!value || depth > 8) return;
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectSearchResults(entry, output, seen, depth + 1));
-    return;
-  }
-  if (typeof value !== "object") return;
-
-  if (typeof value.url === "string" && (value.title || value.snippet || value.site_name)) {
-    collectSearchResult(value, output, seen);
-  }
-
-  Object.values(value).forEach((entry) => collectSearchResults(entry, output, seen, depth + 1));
-}
-
+const FRAGMENT_KIND_BY_TYPE = Object.freeze({ THINK: "thinking", THINKING: "thinking", REASONING: "thinking", RESPONSE: "response", ANSWER: "response", FINAL: "response", FINAL_ANSWER: "response", TEXT: "response", VISION: "response", VISION_RESPONSE: "response" });
+function resolveFragmentKind(type) { return FRAGMENT_KIND_BY_TYPE[String(type ?? "").toUpperCase()] ?? null; }
+function joinPath(parent, child) { if (!parent) return child || ""; if (!child) return parent; return `${parent.replace(/\/$/, "")}/${String(child).replace(/^\//, "")}`; }
+function flattenOperations(payload, inherited = { path: "", op: "SET" }) { const path = payload?.p ?? inherited.path; const op = payload?.o ?? inherited.op; if (op !== "BATCH" || !Array.isArray(payload?.v)) return [{ path, op, value: payload?.v }]; const childState = { path: "", op: "SET" }; return payload.v.flatMap((item) => { const childPath = item?.p ?? childState.path; const childOp = item?.o ?? childState.op; childState.path = childPath; childState.op = childOp; return flattenOperations({ ...item, p: joinPath(path, childPath), o: childOp }, { path: joinPath(path, childPath), op: childOp }); }); }
+function stripReferenceMarkers(text) { return String(text ?? "").replace(/\s*\[reference:\d+\]/gi, "").replace(/\s*\[citation:[^\]\r\n]+\]/gi, ""); }
+function collectSearchResult(result, output, seen) { if (!result || typeof result !== "object") return; const url = typeof result.url === "string" ? result.url.trim() : ""; if (!url || seen.has(url)) return; seen.add(url); output.push({ url, title: typeof result.title === "string" ? result.title.trim() : "", siteName: typeof result.site_name === "string" ? result.site_name.trim() : "", snippet: typeof result.snippet === "string" ? result.snippet.trim() : "" }); }
+function collectSearchResults(value, output, seen, depth = 0) { if (!value || depth > 8) return; if (Array.isArray(value)) { value.forEach((entry) => collectSearchResults(entry, output, seen, depth + 1)); return; } if (typeof value !== "object") return; if (typeof value.url === "string" && (value.title || value.snippet || value.site_name)) collectSearchResult(value, output, seen); Object.values(value).forEach((entry) => collectSearchResults(entry, output, seen, depth + 1)); }
 export function createDeepseekDeltaDecoder() {
-  let currentKind = "response";
-  let currentPath = "";
-  let currentOp = "SET";
-  const searchResults = [];
-  const seenSearchUrls = new Set();
-
+  let currentKind = "response"; let currentPath = ""; let currentOp = "SET"; let responseMessageId = null; const searchResults = []; const seenSearchUrls = new Set();
   function consumeOperation(operation) {
     const { path, value } = operation;
-
-    if (!path && value && typeof value === "object") {
-      const fragments = value?.response?.fragments;
-      if (Array.isArray(fragments)) {
-        collectSearchResults(fragments, searchResults, seenSearchUrls);
-        const fragment = fragments.at(-1);
-        currentKind = resolveFragmentKind(fragment?.type) ?? currentKind;
-        const text = stripReferenceMarkers(fragment?.content);
-        return text ? { kind: currentKind, text } : null;
-      }
-      return null;
-    }
-
-    if (/\/results$/.test(path) || path === "response/search_results") {
-      collectSearchResults(value, searchResults, seenSearchUrls);
-      return null;
-    }
-
-    if (path === "response/fragments" && Array.isArray(value)) {
-      collectSearchResults(value, searchResults, seenSearchUrls);
-      const deltas = [];
-      value.forEach((fragment) => {
-        // Vision responses have used several fragment type names. Unknown textual
-        // fragments are answer text unless the stream explicitly labels them as
-        // thinking; dropping them caused valid image answers to look like an
-        // empty completion.
-        const kind = resolveFragmentKind(fragment?.type) ?? currentKind ?? "response";
-        currentKind = kind;
-        const text = stripReferenceMarkers(fragment?.content);
-        if (text) deltas.push({ kind, text });
-      });
-      return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null);
-    }
-
-    if (/\/type$/.test(path) && typeof value === "string") {
-      currentKind = resolveFragmentKind(value) ?? currentKind;
-      return null;
-    }
-
-    if (/\/content$/.test(path) && typeof value === "string") {
-      const text = stripReferenceMarkers(value);
-      return text ? { kind: currentKind, text } : null;
-    }
-
+    if (/response_message_id|responseMessageId|message_id$/.test(String(path)) && (typeof value === "string" || typeof value === "number")) { responseMessageId = value; return null; }
+    if (!path && value && typeof value === "object") { const fragments = value?.response?.fragments; if (Array.isArray(fragments)) { collectSearchResults(fragments, searchResults, seenSearchUrls); const fragment = fragments.at(-1); currentKind = resolveFragmentKind(fragment?.type) ?? currentKind; const text = stripReferenceMarkers(fragment?.content); return text ? { kind: currentKind, text } : null; } return null; }
+    if (/\/results$/.test(path) || path === "response/search_results") { collectSearchResults(value, searchResults, seenSearchUrls); return null; }
+    if (path === "response/fragments" && Array.isArray(value)) { collectSearchResults(value, searchResults, seenSearchUrls); const deltas = []; value.forEach((fragment) => { const kind = resolveFragmentKind(fragment?.type) ?? currentKind ?? "response"; currentKind = kind; const text = stripReferenceMarkers(fragment?.content); if (text) deltas.push({ kind, text }); }); return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null); }
+    if (/\/type$/.test(path) && typeof value === "string") { currentKind = resolveFragmentKind(value) ?? currentKind; return null; }
+    if (/\/content$/.test(path) && typeof value === "string") { const text = stripReferenceMarkers(value); return text ? { kind: currentKind, text } : null; }
     return null;
   }
-
-  return {
-    consume(payloadText) {
-      let payload;
-      try {
-        payload = JSON.parse(payloadText);
-      } catch {
-        return null;
-      }
-
-      const path = payload?.p ?? currentPath;
-      const op = payload?.o ?? currentOp;
-      currentPath = path;
-      currentOp = op;
-      const operations = flattenOperations({ ...payload, p: path, o: op }, { path, op });
-      const deltas = operations.flatMap((operation) => {
-        const result = consumeOperation(operation);
-        if (!result) return [];
-        return Array.isArray(result) ? result : [result];
-      });
-      return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null);
-    },
-    getSearchResults() {
-      return searchResults.map((item) => ({ ...item }));
-    }
-  };
+  return { consume(payloadText) { let payload; try { payload = JSON.parse(payloadText); } catch { return null; } const path = payload?.p ?? currentPath; const op = payload?.o ?? currentOp; currentPath = path; currentOp = op; const operations = flattenOperations({ ...payload, p: path, o: op }, { path, op }); const deltas = operations.flatMap((operation) => { const result = consumeOperation(operation); if (!result) return []; return Array.isArray(result) ? result : [result]; }); return deltas.length === 1 ? deltas[0] : (deltas.length ? deltas : null); }, getSearchResults() { return searchResults.map((item) => ({ ...item })); }, getResponseMessageId() { return responseMessageId; } };
 }
-
-export function extractContentDelta(payloadText) {
-  const decoder = createDeepseekDeltaDecoder();
-  const delta = decoder.consume(payloadText);
-  if (Array.isArray(delta)) {
-    return delta.map((entry) => entry.text).join("");
-  }
-  return delta?.text ?? "";
-}
+export function extractContentDelta(payloadText) { const decoder = createDeepseekDeltaDecoder(); const delta = decoder.consume(payloadText); if (Array.isArray(delta)) return delta.map((entry) => entry.text).join(""); return delta?.text ?? ""; }
