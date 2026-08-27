@@ -42,3 +42,9 @@ test("explicit MCP request requires a real tool call", () => {
 test("explicit search request requires a real tool call", () => {
   assert.equal(inferToolChoiceForRequest([{ role: "user", content: "搜一下有没有官方政策" }], searchTools, "auto"), "required");
 });
+
+test("MCP discovery and recommendation requests require a real tool call", () => {
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "找一些好玩的MCP" }], searchTools, "auto"), "required");
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "推荐几个实用的 MCP 服务器" }], searchTools, "auto"), "required");
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "有什么好玩的 MCP" }], searchTools, undefined), "required");
+});
