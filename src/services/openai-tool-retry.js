@@ -1,5 +1,8 @@
-export function isRequiredToolPolicy(policy) {
-  return policy?.mode === "required" || policy?.mode === "forced";
+export function isRequiredToolPolicy() {
+  // Required/forced policies may still be validated when explicitly supplied,
+  // but the bridge no longer performs a hidden second completion to coerce a
+  // missing call. Kelivo should receive the model's real first response.
+  return false;
 }
 
 export function buildToolCorrectionPrompt(policy) {
@@ -10,14 +13,7 @@ export function buildToolCorrectionPrompt(policy) {
     "SYSTEM: Your previous response failed because it did not contain a valid declared tool call.",
     target,
     "Do not browse internally, answer the user, explain, plan, or include reasoning.",
-    "Return only one raw XML tool-call block using this exact structure:",
-    "<tool_calls>",
-    "  <tool_call>",
-    "    <tool_name>DECLARED_TOOL_NAME</tool_name>",
-    "    <parameters>{\"key\":\"value\"}</parameters>",
-    "  </tool_call>",
-    "</tool_calls>",
-    "ASSISTANT:"
+    "Return only one raw XML tool-call block."
   ].join("\n");
 }
 
