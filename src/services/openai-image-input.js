@@ -51,17 +51,38 @@ function collectReplayedAssistantImageUrls(messages, latestUserIndex) {
   return urls;
 }
 
+function previousAssistantText(messages, latestUserIndex) {
+  for (let index = latestUserIndex - 1; index >= 0; index -= 1) {
+    if (String(messages[index]?.role ?? "").toLowerCase() !== "assistant") continue;
+    return messageText(messages[index]).trim();
+  }
+  return "";
+}
+
+function requestsVisualInspection(messages, latestUserIndex, userText) {
+  const text = String(userText ?? "").trim();
+  if (/(?:看(?:看|一下|下|见|懂)?|查看|检查|比较|对比|分析|识别|判断|观察|构图|位置|动作|画面|图里|变了|变化|区别|差异|视觉)/i.test(text)) {
+    return true;
+  }
+
+  if (!/^(?:你)?(?:试试|看吧|看看|可以|行|好|嗯|对)[吧啊呀。！!？?]*$/i.test(text)) {
+    return false;
+  }
+  return /(?:view_image|看图|查看|检查|比较|对比|图片|画面|视觉)/i.test(previousAssistantText(messages, latestUserIndex));
+}
+
 export function extractLatestUserImageContext(messages = []) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (String(message?.role ?? "").toLowerCase() !== "user") continue;
 
+    const userText = messageText(message).trim();
     const replayedUrls = collectReplayedAssistantImageUrls(messages, index);
-    const imageInputs = imageInputsFromMessage(message).filter(({ url }) => !replayedUrls.has(normalizeImageUrl(url)));
-    return {
-      imageInputs,
-      userText: messageText(message).trim()
-    };
+    const allowReplayedImages = requestsVisualInspection(messages, index, userText);
+    const imageInputs = imageInputsFromMessage(message).filter(({ url }) => (
+      allowReplayedImages || !replayedUrls.has(normalizeImageUrl(url))
+    ));
+    return { imageInputs, userText };
   }
 
   return { imageInputs: [], userText: "" };
