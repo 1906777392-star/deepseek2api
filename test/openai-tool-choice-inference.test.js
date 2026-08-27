@@ -8,6 +8,11 @@ const tools = ["draw", "redraw", "character_reference", "view_image"].map((name)
   function: { name, parameters: { type: "object" } }
 }));
 
+const searchTools = ["firecrawl_search", "docs"].map((name) => ({
+  type: "function",
+  function: { name, parameters: { type: "object" } }
+}));
+
 test("再来一张 forces draw instead of vague required mode", () => {
   assert.deepEqual(inferToolChoiceForRequest([{ role: "user", content: "再来一张" }], tools, "auto"), {
     type: "function",
@@ -27,4 +32,13 @@ test("explicit same-character scene change forces character_reference", () => {
     type: "function",
     function: { name: "character_reference" }
   });
+});
+
+test("explicit MCP request requires a real tool call", () => {
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "调用呀" }], searchTools, "auto"), "required");
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "用 MCP 工具核实一下" }], searchTools, undefined), "required");
+});
+
+test("explicit search request requires a real tool call", () => {
+  assert.equal(inferToolChoiceForRequest([{ role: "user", content: "搜一下有没有官方政策" }], searchTools, "auto"), "required");
 });
