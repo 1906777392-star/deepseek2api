@@ -104,6 +104,10 @@ export function splitLeakedTranscript(value) {
 export function createTranscriptLeakRouter() {
   let pending = "";
   let mode = "visible";
+  let footerEvents = [];
+  const footerFilter = createAiDisclaimerFilter((text) => {
+    if (text) footerEvents.push({ kind: "response", text });
+  });
 
   function routeLine(rawLine) {
     const line = rawLine.replace(/\n$/, "");
@@ -147,13 +151,27 @@ export function createTranscriptLeakRouter() {
     return events;
   }
 
+  function applyFooterFilter(events, final = false) {
+    footerEvents = [];
+    for (const event of events) {
+      if (event.kind === "response") {
+        footerFilter.push(event.text);
+      } else {
+        footerFilter.flush();
+        footerEvents.push(event);
+      }
+    }
+    if (final) footerFilter.flush();
+    return footerEvents;
+  }
+
   return Object.freeze({
     push(text) {
       pending += String(text ?? "");
-      return drain(false);
+      return applyFooterFilter(drain(false));
     },
     flush() {
-      return drain(true);
+      return applyFooterFilter(drain(true), true);
     }
   });
 }
