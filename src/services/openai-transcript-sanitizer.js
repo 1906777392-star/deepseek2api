@@ -2,6 +2,54 @@ function normalizeLine(value) {
   return String(value ?? "").replace(/\r$/, "");
 }
 
+const AI_DISCLAIMER_PATTERNS = [
+  /\s*本回答由\s*AI\s*生成\s*[，,、；;。]?\s*内容仅供参考\s*[，,、；;。]?\s*请仔细甄别\s*[。.!！]?\s*$/iu,
+  /\s*内容由\s*AI\s*生成\s*[，,、；;。]?\s*请仔细甄别\s*[。.!！]?\s*$/iu
+];
+const AI_DISCLAIMER_STARTS = ["本回答由", "内容由"];
+
+export function stripAiGeneratedDisclaimer(value) {
+  let output = String(value ?? "");
+  for (const pattern of AI_DISCLAIMER_PATTERNS) output = output.replace(pattern, "");
+  return output.replace(/[ \t]+$/g, "");
+}
+
+export function createAiDisclaimerFilter(onSafeText) {
+  let pending = "";
+
+  function findPossibleStart() {
+    let earliest = -1;
+    for (const marker of AI_DISCLAIMER_STARTS) {
+      const index = pending.indexOf(marker);
+      if (index >= 0 && (earliest < 0 || index < earliest)) earliest = index;
+    }
+    return earliest;
+  }
+
+  return Object.freeze({
+    push(text) {
+      pending += String(text ?? "");
+      const start = findPossibleStart();
+      if (start >= 0) {
+        const safe = pending.slice(0, start);
+        pending = pending.slice(start);
+        if (safe) onSafeText(safe);
+        return;
+      }
+      const keep = Math.max(...AI_DISCLAIMER_STARTS.map((item) => item.length - 1));
+      if (pending.length <= keep) return;
+      const safe = pending.slice(0, -keep);
+      pending = pending.slice(-keep);
+      if (safe) onSafeText(safe);
+    },
+    flush() {
+      const safe = stripAiGeneratedDisclaimer(pending);
+      pending = "";
+      if (safe) onSafeText(safe);
+    }
+  });
+}
+
 function isToolTranscriptStart(line) {
   return /^\s*TOOL:\s*(?:Tool result for\b|Image reader result\b)/i.test(normalizeLine(line));
 }
@@ -50,7 +98,7 @@ export function splitLeakedTranscript(value) {
     reasoning += rawLine;
   }
 
-  return { visible, reasoning };
+  return { visible: stripAiGeneratedDisclaimer(visible), reasoning };
 }
 
 export function createTranscriptLeakRouter() {
