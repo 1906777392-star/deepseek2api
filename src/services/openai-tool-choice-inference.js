@@ -25,7 +25,7 @@ export function inferToolChoiceForRequest(messages, tools, suppliedChoice) {
   if (!names.size) return suppliedChoice;
 
   const userText = latestUserText(messages);
-  const explicitToolRequest = /(?:调用|使用|用)(?:一下|下|这个|该|这些|那个)?\s*(?:mcp|MCP|工具)|(?:调用|使用)\s*(?:mcp|MCP)|(?:查一下|查查|查询一下|搜索一下|搜一下|联网查|上网查|核实一下|验证一下)/i.test(userText);
+  const explicitToolRequest = /(?:调用|使用|用)(?:一下|下|这个|该|这些|那个)?\s*(?:mcp|工具)|(?:调用|使用)\s*mcp|(?:查一下|查查|查询一下|搜索一下|搜一下|联网查|上网查|核实一下|验证一下)|(?:找|找找|找一下|推荐|推荐一下)(?:一些|几个|个|点|下)?[^。！？\n]{0,24}(?:mcp|工具|项目|服务|服务器)|(?:有哪些|有什么)(?:好玩|有趣|实用|值得用|推荐)?[^。！？\n]{0,16}(?:mcp|工具|项目|服务|服务器)/i.test(userText);
   if (explicitToolRequest) return "required";
 
   if (![...names].some((name) => IMAGE_GENERATION_TOOL_NAMES.has(name))) return suppliedChoice;
