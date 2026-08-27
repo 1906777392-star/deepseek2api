@@ -1,20 +1,82 @@
-
 @media (max-width: 720px) {
+  .page-content,
+  .page-section,
+  .logs-page,
+  .logs-page .page-title-row,
+  .logs-page .page-title-row > div,
+  .logs-page .page-title-row .inline-actions {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
   .logs-page .page-title-row {
     align-items: stretch;
+    display: flex;
     flex-direction: column;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  .logs-page .page-title-row > div:first-child {
+    flex: 0 1 auto;
   }
 
   .logs-page .page-title-row h2 {
+    display: block;
+    font-size: clamp(1.55rem, 8vw, 2.1rem);
     line-height: 1.25;
-    white-space: nowrap;
+    max-width: 100%;
+    white-space: normal;
     word-break: keep-all;
+    overflow-wrap: normal;
+  }
+
+  .logs-page .page-title-row .inline-actions {
+    align-items: stretch;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .logs-page .page-title-row .inline-actions > * {
+    flex: 0 0 auto;
+    max-width: 100%;
+    width: 100%;
   }
 
   .logs-page .request-log-list {
     display: block;
     max-width: 100%;
     overflow-x: auto;
+    overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .logs-page .request-log-header,
+  .logs-page .request-log-row {
+    min-width: 760px;
+  }
+
+  .account-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-actions {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .account-actions .chip {
+    align-items: center;
+    display: inline-flex;
+    justify-content: center;
+  }
+
+  .account-actions > button {
+    min-width: 0;
+    width: 100%;
   }
 }
