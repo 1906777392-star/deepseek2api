@@ -31,8 +31,14 @@ const TOOL_ARGS_PATTERNS = Object.freeze([
 const TOOL_ATTR_PATTERN = /(name|function|tool)\s*=\s*"([^"]+)"/i;
 
 function toStringSafe(value) {
-  if (typeof value === "string") return value;
-  if (value === null || value === undefined) return "";
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
   return String(value);
 }
 
@@ -48,102 +54,180 @@ function normalizeProtocolMarkup(text) {
     });
 }
 
-function stripFencedCodeBlocks(text) { return toStringSafe(text).replace(/```[\s\S]*?```/g, " "); }
+function stripFencedCodeBlocks(text) {
+  return toStringSafe(text).replace(/```[\s\S]*?```/g, " ");
+}
 
 function decodeXmlText(text) {
   const raw = toStringSafe(text).trim();
   const cdataMatch = raw.match(/^<!\[CDATA\[([\s\S]*?)]]>$/i);
   const source = cdataMatch?.[1] ?? raw;
-  return source.replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", "\"").replaceAll("&#039;", "'").replaceAll("&#x27;", "'");
+  return source
+    .replaceAll("&amp;", "&")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&#039;", "'")
+    .replaceAll("&#x27;", "'");
 }
 
 function parseJsonObject(text) {
-  try { const value = JSON.parse(text); return value && typeof value === "object" && !Array.isArray(value) ? value : null; }
-  catch { return null; }
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 function findTagValue(text, patterns) {
   const source = toStringSafe(text);
+
   for (const pattern of patterns) {
     const match = source.match(pattern);
-    if (match?.[1] !== undefined) return decodeXmlText(match[1]);
+    if (match?.[1] !== undefined) {
+      return decodeXmlText(match[1]);
+    }
   }
+
   return "";
 }
 
-function escapeRegExp(value) { return toStringSafe(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function escapeRegExp(value) {
+  return toStringSafe(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function findAllowedDirectToolTag(text, allowedToolNames) {
-  let best = null;
+  let bestMatch = null;
+
   for (const rawName of allowedToolNames ?? []) {
     const name = toStringSafe(rawName).trim();
-    if (!name) continue;
-    const match = toStringSafe(text).match(new RegExp(`<(?:[a-z0-9_:-]+:)?${escapeRegExp(name)}\\b[^>]*>`, "i"));
-    if (!match || match.index === undefined) continue;
-    if (!best || match.index < best.index) best = { index: match.index, name };
+    if (!name) {
+      continue;
+    }
+
+    const match = toStringSafe(text).match(
+      new RegExp(`<(?:[a-z0-9_:-]+:)?${escapeRegExp(name)}\\b[^>]*>`, "i")
+    );
+    if (!match || match.index === undefined) {
+      continue;
+    }
+
+    if (!bestMatch || match.index < bestMatch.index) {
+      bestMatch = { index: match.index, name };
+    }
   }
-  return best?.name ?? "";
+
+  return bestMatch?.name ?? "";
 }
 
 function appendMarkupValue(output, key, value) {
-  if (!Object.hasOwn(output, key)) { output[key] = value; return; }
+  if (!Object.hasOwn(output, key)) {
+    output[key] = value;
+    return;
+  }
+
   const current = output[key];
   output[key] = Array.isArray(current) ? [...current, value] : [current, value];
 }
 
 function parseMarkupValue(raw) {
   const text = decodeXmlText(raw);
-  if (!text.trim()) return "";
+
+  if (!text.trim()) {
+    return "";
+  }
+
   if (text.includes("<") && text.includes(">")) {
     const nested = parseMarkupInput(text);
-    if (nested && Object.keys(nested).length > 0) return nested;
+    if (nested && Object.keys(nested).length > 0) {
+      return nested;
+    }
   }
+
   const parsedJson = parseJsonObject(text);
-  if (parsedJson) return parsedJson;
-  try { return JSON.parse(text); } catch { return text; }
+  if (parsedJson) {
+    return parsedJson;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 function parseMarkupObject(text) {
   const output = {};
+
   for (const match of toStringSafe(text).matchAll(TOOL_KV_PATTERN)) {
     const key = toStringSafe(match[1]).trim();
-    if (!key) continue;
+    if (!key) {
+      continue;
+    }
+
     appendMarkupValue(output, key, parseMarkupValue(match[2]));
   }
+
   return output;
 }
 
 function parseMarkupInput(raw) {
   const text = decodeXmlText(raw);
   const markupObject = parseMarkupObject(text);
-  if (Object.keys(markupObject).length > 0) return markupObject;
+
+  if (Object.keys(markupObject).length > 0) {
+    return markupObject;
+  }
+
   return parseJsonObject(text) ?? {};
 }
 
 function normalizeJsonArguments(value) {
-  if (typeof value === "string") { const trimmed = value.trim(); return trimmed || "{}"; }
-  if (value && typeof value === "object") return JSON.stringify(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed || "{}";
+  }
+
+  if (value && typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
   return "{}";
 }
 
 function buildParsedToolCall(name, argumentsText) {
   const normalizedArguments = argumentsText.trim() ? argumentsText.trim() : "{}";
-  return { id: `call_${randomUUID().replaceAll("-", "")}`, name, argumentsText: normalizedArguments, input: parseJsonObject(normalizedArguments) ?? parseMarkupInput(normalizedArguments) };
+  return {
+    id: `call_${randomUUID().replaceAll("-", "")}`,
+    name,
+    argumentsText: normalizedArguments,
+    input: parseJsonObject(normalizedArguments) ?? parseMarkupInput(normalizedArguments)
+  };
 }
 
 function parseMarkupBlock(attrs, inner, allowedToolNames) {
   const jsonTool = parseJsonObject(inner);
-  const jsonName = toStringSafe(jsonTool?.name ?? jsonTool?.tool_name ?? jsonTool?.function_name ?? jsonTool?.function?.name).trim();
+  const jsonName = toStringSafe(
+    jsonTool?.name ?? jsonTool?.tool_name ?? jsonTool?.function_name ?? jsonTool?.function?.name
+  ).trim();
   const usesAliasName = Boolean(jsonName && !jsonTool?.name && !jsonTool?.function?.name);
-  const hasExplicitArguments = Boolean(jsonTool && (["input", "arguments", "parameters", "args"].some((key) => Object.hasOwn(jsonTool, key)) || (jsonTool.function && Object.hasOwn(jsonTool.function, "arguments"))));
+  const hasExplicitArguments = Boolean(jsonTool && (
+    ["input", "arguments", "parameters", "args"].some((key) => Object.hasOwn(jsonTool, key)) ||
+    (jsonTool.function && Object.hasOwn(jsonTool.function, "arguments"))
+  ));
   if (jsonName && (!usesAliasName || hasExplicitArguments)) {
-    const jsonArguments = jsonTool?.input ?? jsonTool?.arguments ?? jsonTool?.parameters ?? jsonTool?.args ?? jsonTool?.function?.arguments ?? {};
+    const jsonArguments = jsonTool?.input ?? jsonTool?.arguments ?? jsonTool?.parameters ??
+      jsonTool?.args ?? jsonTool?.function?.arguments ?? {};
     return buildParsedToolCall(jsonName, normalizeJsonArguments(jsonArguments));
   }
 
   const attrName = attrs.match(TOOL_ATTR_PATTERN)?.[2] ?? "";
   const explicitName = findTagValue(inner, TOOL_NAME_PATTERNS).trim();
   const name = attrName.trim() || explicitName || findAllowedDirectToolTag(inner, allowedToolNames);
-  if (!name) return null;
+  if (!name) {
+    return null;
+  }
 
   const argsRaw = findTagValue(inner, TOOL_ARGS_PATTERNS);
   const parsedInput = argsRaw ? parseMarkupInput(argsRaw) : parseMarkupObject(inner);
@@ -154,26 +238,46 @@ function parseMarkupBlock(attrs, inner, allowedToolNames) {
 function parseMarkupToolCalls(text, allowedToolNames) {
   const output = [];
   const source = normalizeProtocolMarkup(text).trim();
+
   for (const match of source.matchAll(TOOL_BLOCK_PATTERN)) {
-    const parsed = parseMarkupBlock(toStringSafe(match[2]).trim(), toStringSafe(match[3]).trim(), allowedToolNames);
-    if (parsed) output.push(parsed);
+    const parsed = parseMarkupBlock(
+      toStringSafe(match[2]).trim(),
+      toStringSafe(match[3]).trim(),
+      allowedToolNames
+    );
+    if (parsed) {
+      output.push(parsed);
+    }
   }
+
   for (const match of source.matchAll(TOOL_SELFCLOSE_PATTERN)) {
     const parsed = parseMarkupBlock(toStringSafe(match[1]).trim(), "", allowedToolNames);
-    if (parsed) output.push(parsed);
+    if (parsed) {
+      output.push(parsed);
+    }
   }
+
   return output;
 }
 
 function filterAllowedToolCalls(calls, allowedToolNames) {
-  if (!allowedToolNames?.length) return calls;
+  if (!allowedToolNames?.length) {
+    return calls;
+  }
+
   const allowed = new Set(allowedToolNames.map((name) => toStringSafe(name).trim()).filter(Boolean));
   return calls.filter((call) => allowed.has(call.name));
 }
 
 export function parseToolCallsFromText(text, allowedToolNames = []) {
   const source = normalizeProtocolMarkup(text);
-  if (!source.trim()) return [];
-  if (!stripFencedCodeBlocks(source).match(/<(tool_calls|tool_call|function_call|invoke|tool_use)\b/i)) return [];
+  if (!source.trim()) {
+    return [];
+  }
+
+  if (!stripFencedCodeBlocks(source).match(/<(tool_calls|tool_call|function_call|invoke|tool_use)\b/i)) {
+    return [];
+  }
+
   return filterAllowedToolCalls(parseMarkupToolCalls(source, allowedToolNames), allowedToolNames);
 }
