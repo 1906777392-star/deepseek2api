@@ -11,10 +11,6 @@ function parseArguments(call) {
   }
 }
 
-function isMissing(value) {
-  return value === undefined || value === null || (typeof value === "string" && !value.trim());
-}
-
 function matchesType(value, type) {
   if (!type) return true;
   if (type === "array") return Array.isArray(value);
@@ -40,10 +36,10 @@ function validateValue(value, schema, path, issues) {
 function validateObject(value, schema, path, issues) {
   const required = Array.isArray(schema?.required) ? schema.required : [];
   for (const name of required) {
-    if (isMissing(value?.[name])) issues.push(`${path ? `${path}.` : ""}${name} is required`);
+    if (!Object.hasOwn(value ?? {}, name)) issues.push(`${path ? `${path}.` : ""}${name} is required`);
   }
   for (const [name, propertySchema] of Object.entries(schema?.properties ?? {})) {
-    if (value?.[name] === undefined || value?.[name] === null) continue;
+    if (!Object.hasOwn(value ?? {}, name) || value[name] === null) continue;
     validateValue(value[name], propertySchema, path ? `${path}.${name}` : name, issues);
   }
 }
