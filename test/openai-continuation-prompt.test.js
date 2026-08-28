@@ -4,6 +4,7 @@ import test from "node:test";
 import { continuationPrompt } from "../src/services/openai-bridge.js";
 
 const lineage = { sessionId: "session-1", parentMessageId: "message-1" };
+const suppliedPassword = "example-password-4821";
 
 test("user follow-up keeps the latest tool result from the same interaction", () => {
   const messages = [
@@ -18,13 +19,13 @@ test("user follow-up keeps the latest tool result from the same interaction", ()
       content: "没做成：还没有登录。请先调用 login，并让使用者本人提供密码。"
     },
     { role: "assistant", content: "要开始画图需要先登录，请把密码发给我。" },
-    { role: "user", content: "DEADSEA" }
+    { role: "user", content: suppliedPassword }
   ];
 
   const prompt = continuationPrompt(messages, "FULL PROMPT", lineage);
   assert.match(prompt, /TOOL: Tool result for draw:/);
   assert.match(prompt, /还没有登录/);
-  assert.match(prompt, /USER: DEADSEA/);
+  assert.match(prompt, new RegExp(`USER: ${suppliedPassword}`));
   assert.match(prompt, /ASSISTANT:$/);
 });
 
@@ -40,7 +41,7 @@ test("ordinary user continuation remains incremental when no tool result occurre
 
 test("requests without stored lineage still use the complete prompt", () => {
   assert.equal(
-    continuationPrompt([{ role: "user", content: "DEADSEA" }], "FULL PROMPT", null),
+    continuationPrompt([{ role: "user", content: suppliedPassword }], "FULL PROMPT", null),
     "FULL PROMPT"
   );
 });
