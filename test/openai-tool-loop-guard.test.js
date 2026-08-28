@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { blockedToolNamesForRequest, completedToolNamesSinceLatestUser, filterToolsForRequest, limitImageGenerationCalls } from "../src/services/openai-tool-loop-guard.js";
+import { blockedToolNamesForRequest, completedToolNamesSinceLatestUser, filterToolsForRequest, hasPendingJobContext, limitImageGenerationCalls } from "../src/services/openai-tool-loop-guard.js";
 
 const tools = ["draw", "redraw", "view_image", "check_job", "create_memory"].map((name) => ({ type: "function", function: { name, parameters: { type: "object" } } }));
 
-test("successful tool results block the same tool again in one user turn", () => {
+test("successful tool results block image regeneration and check_job in one user turn", () => {
   const messages = [
     { role: "user", content: "画图" },
     { role: "assistant", tool_calls: [{ id: "call_draw", type: "function", function: { name: "draw", arguments: "{}" } }] },
@@ -15,8 +15,23 @@ test("successful tool results block the same tool again in one user turn", () =>
   const blocked = blockedToolNamesForRequest(messages);
   assert.equal(blocked.has("draw"), true);
   assert.equal(blocked.has("redraw"), true);
+  assert.equal(blocked.has("check_job"), true);
   assert.equal(blocked.has("view_image"), false);
-  assert.deepEqual(filterToolsForRequest(tools, messages).map((tool) => tool.function.name), ["view_image", "check_job", "create_memory"]);
+  assert.deepEqual(filterToolsForRequest(tools, messages).map((tool) => tool.function.name), ["view_image", "create_memory"]);
+});
+
+test("check_job is hidden until a real pending task code exists", () => {
+  const fresh = [{ role: "user", content: "画两张猫" }];
+  assert.equal(hasPendingJobContext(fresh), false);
+  assert.equal(filterToolsForRequest(tools, fresh).some((tool) => tool.function.name === "check_job"), false);
+
+  const pending = [
+    ...fresh,
+    { role: "assistant", tool_calls: [{ id: "call_draw", type: "function", function: { name: "draw", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_draw", name: "draw", content: "任务码：A1B2C\n当前状态：还在画。" }
+  ];
+  assert.equal(hasPendingJobContext(pending), true);
+  assert.equal(filterToolsForRequest(tools, pending).some((tool) => tool.function.name === "check_job"), true);
 });
 
 test("image attachment proves success even when result text contains a fallback quota error", () => {
@@ -36,6 +51,7 @@ test("image attachment proves success even when result text contains a fallback 
   const blocked = blockedToolNamesForRequest(messages);
   assert.equal(blocked.has("redraw"), true);
   assert.equal(blocked.has("draw"), true);
+  assert.equal(blocked.has("check_job"), true);
 });
 
 test("after one image inspection the same view tool is blocked but final answering remains possible", () => {
