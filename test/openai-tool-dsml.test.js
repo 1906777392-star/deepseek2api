@@ -22,6 +22,15 @@ const FENCED_CHARACTER_SAVE = [
   "```"
 ].join("\n");
 
+const DIRECT_DRAW_TAG = [
+  "<tool_calls>",
+  "<tool_call>",
+  "<draw>",
+  '<parameters>{"english_visual_description":"1girl, petite, twin tails","coherence_checked":true,"avoid":"watermark","count":1}</parameters>',
+  "</tool_call>",
+  "</tool_calls>"
+].join("\n");
+
 test("parses DSML invoke attributes and CDATA JSON", () => {
   const calls = parseToolCallsFromText(DSML_DRAW, ["draw"]);
   assert.equal(calls.length, 1);
@@ -29,6 +38,27 @@ test("parses DSML invoke attributes and CDATA JSON", () => {
   assert.equal(calls[0].input.english_visual_description, "1girl, full body");
   assert.equal(calls[0].input.coherence_checked, true);
   assert.equal(calls[0].input.token_2, "temporary-code");
+});
+
+test("parses a declared tool written directly as the first tool_call tag", () => {
+  const calls = parseToolCallsFromText(DIRECT_DRAW_TAG, ["draw"]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "draw");
+  assert.equal(calls[0].input.english_visual_description, "1girl, petite, twin tails");
+  assert.equal(calls[0].input.coherence_checked, true);
+  assert.equal(calls[0].input.count, 1);
+});
+
+test("stream sieve emits a direct declared tool-name tag as a tool call", () => {
+  const parsed = extractToolAwareOutput(DIRECT_DRAW_TAG, ["draw"]);
+  assert.equal(parsed.content, "");
+  assert.equal(parsed.toolCalls.length, 1);
+  assert.equal(parsed.toolCalls[0].name, "draw");
+});
+
+test("direct tags that are not declared tools remain rejected", () => {
+  const calls = parseToolCallsFromText(DIRECT_DRAW_TAG.replace("<draw>", "<unknown_tool>"), ["draw"]);
+  assert.deepEqual(calls, []);
 });
 
 test("stream sieve removes a split DSML wrapper and emits one tool call", () => {
