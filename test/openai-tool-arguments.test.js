@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { repairToolCalls } from "../src/services/openai-tool-arguments.js";
+import { validateToolCalls } from "../src/services/openai-tool-arguments.js";
 
 const drawTool = {
   type: "function",
@@ -21,61 +21,25 @@ const drawTool = {
   }
 };
 
-const searchTool = {
-  type: "function",
-  function: {
-    name: "search_web",
-    parameters: {
-      type: "object",
-      properties: { query: { type: "string" } },
-      required: ["query"]
-    }
-  }
-};
-
-const deleteTool = {
-  type: "function",
-  function: {
-    name: "delete_item",
-    parameters: {
-      type: "object",
-      properties: { id: { type: "string" }, confirm: { type: "boolean" } },
-      required: ["id", "confirm"]
-    }
-  }
-};
-
-test("repairs an empty draw call when the user delegates creative choices", () => {
-  const messages = [
-    { role: "tool", content: '{"token_2":"LOGIN123"}' },
-    { role: "user", content: "随便你" }
-  ];
-  const result = repairToolCalls({ calls: [{ name: "draw", argumentsText: "{}" }], tools: [drawTool], messages });
-  assert.equal(result.rejected.length, 0);
-  assert.deepEqual(JSON.parse(result.calls[0].argumentsText), {
-    aspect_2: "竖图",
-    count: 1,
-    token_2: "LOGIN123",
-    english_visual_description: "1girl, full body, calm expression, standing in a quiet starlit field, flowing silver-white hair, dark elegant outfit, soft blue and silver moonlight, balanced composition, detailed atmospheric background",
-    coherence_checked: true
-  });
-});
-
-test("fills a single required string field from the latest user request", () => {
-  const result = repairToolCalls({
-    calls: [{ name: "search_web", argumentsText: "{}" }],
-    tools: [searchTool],
-    messages: [{ role: "user", content: "找一些好玩的 MCP" }]
-  });
-  assert.deepEqual(JSON.parse(result.calls[0].argumentsText), { query: "找一些好玩的 MCP" });
-});
-
-test("rejects unresolved multi-field calls instead of dispatching empty arguments", () => {
-  const result = repairToolCalls({
-    calls: [{ name: "delete_item", argumentsText: "{}" }],
-    tools: [deleteTool],
-    messages: [{ role: "user", content: "删掉它" }]
-  });
+test("empty tool arguments are rejected rather than filled by the bridge", () => {
+  const result = validateToolCalls({ calls: [{ name: "draw", argumentsText: "{}" }], tools: [drawTool] });
   assert.equal(result.calls.length, 0);
-  assert.deepEqual(result.rejected, [{ name: "delete_item", missing: ["id", "confirm"] }]);
+  assert.match(result.rejected[0].issues.join(" "), /english_visual_description is required/);
+  assert.doesNotMatch(JSON.stringify(result), /starlit field|silver-white hair/);
+});
+
+test("complete AI-generated arguments pass through unchanged", () => {
+  const args = { aspect_2: "方图", count: 2, token_2: "LOGIN123", english_visual_description: "2cats, playing chess", coherence_checked: true };
+  const result = validateToolCalls({ calls: [{ name: "draw", argumentsText: JSON.stringify(args) }], tools: [drawTool] });
+  assert.equal(result.rejected.length, 0);
+  assert.deepEqual(JSON.parse(result.calls[0].argumentsText), args);
+});
+
+test("wrong types and enum values are rejected", () => {
+  const args = { aspect_2: "超宽图", count: "1", token_2: "LOGIN123", english_visual_description: "cat", coherence_checked: "yes" };
+  const result = validateToolCalls({ calls: [{ name: "draw", argumentsText: JSON.stringify(args) }], tools: [drawTool] });
+  const issues = result.rejected[0].issues.join(" ");
+  assert.match(issues, /aspect_2 must be one of/);
+  assert.match(issues, /count must be integer/);
+  assert.match(issues, /coherence_checked must be boolean/);
 });
