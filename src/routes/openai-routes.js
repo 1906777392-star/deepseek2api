@@ -3,6 +3,7 @@ import { takeRoundRobinAccount } from "../services/account-rotation-service.js";
 import { isIncognitoEnabledForOwner } from "../services/incognito-service.js";
 import { getConversationId } from "../services/conversation-service.js";
 import { collectOpenAiResponse, streamOpenAiResponse } from "../services/openai-bridge.js";
+import { runWithOpenAiToolContext } from "../services/openai-tool-context.js";
 import { hasChatToolingRequest } from "../services/openai-tool-policy.js";
 import { listOpenAiModels } from "../services/openai-request.js";
 import { recordRequestLog } from "../services/request-log-service.js";
@@ -20,9 +21,6 @@ async function handleChatCompletionsRequest(request, response, apiKeyRecord) {
   await withOwnerRequestLimit(apiKeyRecord.ownerId, async () => {
     const startedAt = Date.now();
     const body = parseJsonBody(await readRequestBody(request)) ?? {};
-    // Keep one account for a Kelivo conversation/tool flow, but deliberately do
-    // not reuse DeepSeek chat_session_id or parent_message_id. Every request
-    // below receives the complete OpenAI messages array as a fresh prompt.
     const conversationId = getConversationId(request, body);
     const account = takeRoundRobinAccount(apiKeyRecord, { forceFixed: Boolean(conversationId) || hasChatToolingRequest(body) });
     if (!account) {
@@ -32,14 +30,16 @@ async function handleChatCompletionsRequest(request, response, apiKeyRecord) {
     }
     const deleteAfterFinish = isIncognitoEnabledForOwner(apiKeyRecord.ownerId);
     try {
-      if (body.stream) {
-        await streamOpenAiResponse({ response, account, body, deleteAfterFinish, toolCallsEnabled: apiKeyRecord.toolCallsEnabled });
+      await runWithOpenAiToolContext(body.messages ?? [], async () => {
+        if (body.stream) {
+          await streamOpenAiResponse({ response, account, body, deleteAfterFinish, toolCallsEnabled: apiKeyRecord.toolCallsEnabled });
+          recordRequestLog({ method: "POST", path: "/v1/chat/completions", model: body.model, ownerId: apiKeyRecord.ownerId, accountId: account.id, status: 200, durationMs: Date.now() - startedAt });
+          return;
+        }
+        const payload = await collectOpenAiResponse({ account, body, deleteAfterFinish, toolCallsEnabled: apiKeyRecord.toolCallsEnabled });
+        sendJson(response, 200, payload);
         recordRequestLog({ method: "POST", path: "/v1/chat/completions", model: body.model, ownerId: apiKeyRecord.ownerId, accountId: account.id, status: 200, durationMs: Date.now() - startedAt });
-        return;
-      }
-      const payload = await collectOpenAiResponse({ account, body, deleteAfterFinish, toolCallsEnabled: apiKeyRecord.toolCallsEnabled });
-      sendJson(response, 200, payload);
-      recordRequestLog({ method: "POST", path: "/v1/chat/completions", model: body.model, ownerId: apiKeyRecord.ownerId, accountId: account.id, status: 200, durationMs: Date.now() - startedAt });
+      });
     } catch (error) {
       recordRequestLog({ method: "POST", path: "/v1/chat/completions", model: body.model, ownerId: apiKeyRecord.ownerId, accountId: account.id, status: error.statusCode ?? 500, durationMs: Date.now() - startedAt, error: error.message });
       throw error;
