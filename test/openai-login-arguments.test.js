@@ -3,14 +3,16 @@ import test from "node:test";
 
 import { recoverLoginArguments } from "../src/services/openai-login-arguments.js";
 
+const suppliedPassword = "example-password-4821";
+
 test("recovers a user-provided password when DeepSeek emits login with empty arguments", () => {
   const calls = [{ id: "call_1", name: "login", argumentsText: "{}", input: {} }];
   const messages = [
     { role: "assistant", content: "请把密码发给我" },
-    { role: "user", content: "DEADSEA" }
+    { role: "user", content: suppliedPassword }
   ];
   const repaired = recoverLoginArguments(calls, messages);
-  assert.deepEqual(JSON.parse(repaired[0].argumentsText), { password: "DEADSEA" });
+  assert.deepEqual(JSON.parse(repaired[0].argumentsText), { password: suppliedPassword });
 });
 
 test("does not treat a generic password statement as the password value", () => {
@@ -21,6 +23,6 @@ test("does not treat a generic password statement as the password value", () => 
 
 test("does not alter non-login tool calls", () => {
   const calls = [{ id: "call_1", name: "draw", argumentsText: "{}", input: {} }];
-  const repaired = recoverLoginArguments(calls, [{ role: "user", content: "DEADSEA" }]);
+  const repaired = recoverLoginArguments(calls, [{ role: "user", content: suppliedPassword }]);
   assert.deepEqual(repaired, calls);
 });
