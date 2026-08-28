@@ -114,6 +114,10 @@ export function latestCompletedImageToolResult(messages = []) {
   const authInputRequest = latestAuthInputRequest(messages);
   if (authInputRequest) return { name: "auth_input", imageUrls: [], content: authInputRequest };
 
+  // A successful login is not the end of the user's request. Let the selected
+  // model see it so it can resume the draw/save action that was blocked by auth.
+  if (name === "login") return null;
+
   const imageUrls = extractImageUrls(message?.content);
   if (IMAGE_GENERATION_TOOL_NAMES.has(name) && imageUrls.length) return { name, imageUrls };
 

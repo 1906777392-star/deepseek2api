@@ -42,6 +42,19 @@ test("an authentication request from character_save is finalized directly", () =
   assert.equal(formatCompletedImageToolResult(result), result.content);
 });
 
+test("successful login is passed back to the model so the blocked action can resume", () => {
+  const messages = [
+    { role: "user", content: "继续画剩下的角色" },
+    { role: "assistant", tool_calls: [{ id: "call_draw", type: "function", function: { name: "draw", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_draw", content: "还没有登录，请提供密码。" },
+    { role: "user", content: "example-password" },
+    { role: "assistant", tool_calls: [{ id: "call_login", type: "function", function: { name: "login", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_login", content: { message: "已登录", token_2: "secret-login-token" } }
+  ];
+
+  assert.equal(latestCompletedImageToolResult(messages), null);
+});
+
 test("ordinary Miaohui action results are returned directly", () => {
   const messages = [
     { role: "assistant", tool_calls: [{ id: "call_save", type: "function", function: { name: "character_save", arguments: "{}" } }] },
@@ -54,18 +67,6 @@ test("ordinary Miaohui action results are returned directly", () => {
     imageUrls: [],
     content: "角色“白丝小萝莉”已经存入档案。"
   });
-});
-
-test("sensitive login values are hidden from direct tool output", () => {
-  const messages = [
-    { role: "assistant", tool_calls: [{ id: "call_login", type: "function", function: { name: "login", arguments: "{}" } }] },
-    { role: "tool", tool_call_id: "call_login", content: { message: "登录成功", token_2: "secret-login-token" } }
-  ];
-
-  const result = latestCompletedImageToolResult(messages);
-  assert.match(result.content, /登录成功/);
-  assert.doesNotMatch(result.content, /secret-login-token/);
-  assert.match(result.content, /\[已隐藏\]/);
 });
 
 test("view_image remains available for a model-authored visual judgment", () => {
