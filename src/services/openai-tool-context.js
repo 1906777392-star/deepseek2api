@@ -4,7 +4,7 @@ import { getToolFunction, getToolName } from "./openai-tool-policy.js";
 const contextStorage = new AsyncLocalStorage();
 const AUTHENTICATED_TOOLS = new Set([
   "my_account", "draw", "redraw", "photo_tool", "find_style", "use_style", "settings",
-  "upload_image", "check_job", "inpaint", "recharge", "character_reference", "comic_page",
+  "upload_image", "inpaint", "recharge", "character_reference", "comic_page",
   "character_save", "character_list", "character_forget", "vibe_transfer", "scene_save",
   "scene_list", "scene_use", "scene_forget", "character_panel", "view_image"
 ]);
