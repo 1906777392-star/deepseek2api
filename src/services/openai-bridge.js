@@ -27,15 +27,19 @@ function messageText(message) {
 function inferToolChoice(messages, tools, suppliedChoice) { return inferToolChoiceForRequest(messages, tools, suppliedChoice); }
 function toolNameForResult(messages, resultIndex) { const result = messages[resultIndex]; const explicit = String(result?.name ?? "").trim(); if (explicit) return explicit; const callId = String(result?.tool_call_id ?? "").trim(); if (!callId) return ""; for (let index = resultIndex - 1; index >= 0; index -= 1) { const calls = messages[index]?.tool_calls; if (!Array.isArray(calls)) continue; const matched = calls.find((call) => String(call?.id ?? "").trim() === callId); const name = String(matched?.function?.name ?? matched?.name ?? "").trim(); if (name) return name; } return ""; }
 function latestToolResultBeforeLatestUser(messages) { if (!Array.isArray(messages) || !messages.length) return null; let latestUser = -1; let previousUser = -1; for (let index = messages.length - 1; index >= 0; index -= 1) { if (String(messages[index]?.role ?? "").toLowerCase() !== "user") continue; if (latestUser < 0) latestUser = index; else { previousUser = index; break; } } if (latestUser < 0) return null; for (let index = latestUser - 1; index > previousUser; index -= 1) { const role = String(messages[index]?.role ?? "").toLowerCase(); if (role !== "tool" && role !== "function") continue; const content = messageText(messages[index]).trim(); if (!content) return null; return { content, name: toolNameForResult(messages, index) }; } return null; }
+function latestToolResult(messages) { if (!Array.isArray(messages) || !messages.length) return null; const index = messages.length - 1; const message = messages[index]; const role = String(message?.role ?? "").toLowerCase(); if (role !== "tool" && role !== "function") return null; return { content: messageText(message).trim(), name: toolNameForResult(messages, index) }; }
 function directToolResultContinuation(messages) {
-  const resultIndex = messages.length - 1;
-  const result = messages[resultIndex];
-  const name = toolNameForResult(messages, resultIndex) || "the previous tool";
-  const content = messageText(result).trim() || "(The tool returned an empty result.)";
+  const result = latestToolResult(messages);
+  const name = result?.name || "the previous tool";
+  const content = result?.content || "(The tool returned an empty result.)";
+  const loginResume = name === "login" && /(?:登录成功|已登录|认证成功)/i.test(content);
+  const systemInstruction = loginResume
+    ? "SYSTEM: 登录已经成功。不要停在登录结果，也不要只回复‘已登录’。根据完整消息历史，立即恢复并继续执行登录前最近一次因未登录而中断的工具调用；如果是 draw、redraw、save 或其他喵绘动作，就直接再次调用对应工具。不要向使用者索要已经提供过的密码或登录码。"
+    : "SYSTEM: Continue from this tool result only. Do not repeat an earlier greeting, question, plan, or pre-tool answer. If the action succeeded, report the result briefly. If it failed or needs a value, state that specific problem or ask only for the missing value. Do not pretend the tool was not executed.";
   return [
     "SYSTEM: The Kelivo client has just executed the assistant's tool call. The following TOOL block is the new result for that exact call.",
     `TOOL: Tool result for ${name}:\n${content}`,
-    "SYSTEM: Continue from this tool result only. Do not repeat an earlier greeting, question, plan, or pre-tool answer. If the action succeeded, report the result briefly. If it failed or needs a value, state that specific problem or ask only for the missing value. Do not pretend the tool was not executed.",
+    systemInstruction,
     "ASSISTANT:"
   ].join("\n\n");
 }
@@ -61,11 +65,11 @@ function rememberLineage(lineage, result) { if (lineage?.conversationId && resul
 export async function collectOpenAiResponse({ account, body, deleteAfterFinish = false, toolCallsEnabled = false, lineage = null }) { const completedImage = latestCompletedImageToolResult(body?.messages ?? []); if (completedImage) { const model = resolveOpenAiModel(body?.model); return buildDirectCompletionPayload(createCompletionId(), model.id, formatCompletedImageToolResult(completedImage)); } const requestOptions = resolveCompletionRequest(body, toolCallsEnabled, lineage); const { result, parsed } = await collectWithRequiredToolRetry({ account, deleteAfterFinish, requestOptions }); rememberLineage(lineage, result); return buildChatCompletionPayload(createCompletionId(), requestOptions, result, parsed); }
 
 export async function streamOpenAiResponse(options) {
-  const { account, body, deleteAfterFinish = false, onInvalidSession, response, toolCallsEnabled = false, lineage = null, retryInvalidSession = false } = options;
+  const { account, body, deleteAfterFinish = false, onInvalidSession, response, lineage = null, retryInvalidSession = false } = options;
   const completionId = createCompletionId();
   const completedImage = latestCompletedImageToolResult(body?.messages ?? []);
   if (completedImage) { const model = resolveOpenAiModel(body?.model); beginSse(response); writeSseChunk(response, buildChunkPayload(completionId, model.id, { role: "assistant" })); writeSseChunk(response, buildChunkPayload(completionId, model.id, { content: formatCompletedImageToolResult(completedImage) })); writeSseChunk(response, buildChunkPayload(completionId, model.id, {}, "stop")); response.end("data: [DONE]\n\n"); return; }
-  const requestOptions = resolveCompletionRequest(body, toolCallsEnabled, lineage);
+  const requestOptions = resolveCompletionRequest(body, options.toolCallsEnabled ?? false, lineage);
   const toolSieve = requestOptions.toolNames.length ? createToolSieve(requestOptions.toolNames) : null; const transcriptRouter = createTranscriptLeakRouter(); let toolCallIndex = 0; let sawToolCall = false; let emittedImageGeneration = false; let lastRoutedKind = "response"; let emittedOutput = false; let rejectedCalls = [];
   beginSse(response); writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { role: "assistant" }));
   const emitReasoningText = (text) => { if (text) { emittedOutput = true; writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { reasoning_content: text })); } }; const reasoningRedactor = createStreamingReasoningRedactor(emitReasoningText); const emitPlainText = (kind, text) => { if (!text) return; if (kind === "thinking") { reasoningRedactor.push(text); return; } emittedOutput = true; reasoningRedactor.flush(); writeSseChunk(response, buildChunkPayload(completionId, requestOptions.model.id, { content: text })); }; const emitRoutedText = (kind, text) => { if (kind === "thinking") { emitPlainText(kind, text); return; } transcriptRouter.push(text).forEach((event) => emitPlainText(event.kind, event.text)); };
