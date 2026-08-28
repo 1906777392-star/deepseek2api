@@ -63,8 +63,10 @@ function rememberedValues(messages) {
     if (role === "assistant" && Array.isArray(message?.tool_calls)) {
       for (const call of message.tool_calls) {
         const args = parseArguments({ argumentsText: call?.function?.arguments ?? call?.arguments });
-        if (!loginCode) loginCode = String(args.token_2 ?? args.token ?? "").trim();
-        if (!imageCode) imageCode = String(args.image_code ?? "").trim().toUpperCase();
+        const rememberedToken = String(args.token_2 ?? args.token ?? "").trim();
+        const rememberedImage = String(args.image_code ?? "").trim().toUpperCase();
+        if (rememberedToken) loginCode = rememberedToken;
+        if (rememberedImage) imageCode = rememberedImage;
       }
       continue;
     }
@@ -120,7 +122,7 @@ export function recoverContextualToolArguments(calls = [], tools = []) {
       args[imageField] = imageCode;
     }
 
-    if (count && Object.hasOwn(properties, "count") && isEmpty(args.count)) args.count = count;
+    if (count && Object.hasOwn(properties, "count")) args.count = count;
 
     return { ...call, argumentsText: JSON.stringify(args), input: args };
   });
