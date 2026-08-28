@@ -109,6 +109,15 @@ export function latestCompletedImageToolResult(messages = []) {
   const name = toStringSafe(message?.name).trim()
     || namesById.get(toStringSafe(message?.tool_call_id).trim())
     || "";
+  const imageUrls = extractImageUrls(message?.content);
+
+  // Some clients omit both `name` and the preceding assistant tool-call turn.
+  // Actual returned image URLs still prove that generation completed, so finish
+  // directly instead of asking the model to invent a check_job call.
+  if (imageUrls.length && (!name || IMAGE_GENERATION_TOOL_NAMES.has(name) || name === "check_job")) {
+    return { name: name || "image_result", imageUrls };
+  }
+
   if (!DIRECT_MIAOHUI_TOOL_NAMES.has(name)) return null;
 
   const authInputRequest = latestAuthInputRequest(messages);
@@ -118,7 +127,6 @@ export function latestCompletedImageToolResult(messages = []) {
   // model see it so it can resume the draw/save action that was blocked by auth.
   if (name === "login") return null;
 
-  const imageUrls = extractImageUrls(message?.content);
   if (IMAGE_GENERATION_TOOL_NAMES.has(name) && imageUrls.length) return { name, imageUrls };
 
   const content = redactSensitiveResult(textFromContent(message?.content).trim());
