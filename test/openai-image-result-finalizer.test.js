@@ -22,6 +22,24 @@ test("the last successful image tool result is finalized without another model t
   assert.equal(formatCompletedImageToolResult(result), "已经完成。\n\n![](https://img.example/result.png)");
 });
 
+test("all returned images are finalized together", () => {
+  const messages = [
+    { role: "assistant", tool_calls: [{ id: "call_draw", type: "function", function: { name: "draw", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_draw", name: "draw", content: "![](https://img.example/a.png)\n![](https://img.example/b.png)" }
+  ];
+  const result = latestCompletedImageToolResult(messages);
+  assert.deepEqual(result?.imageUrls, ["https://img.example/a.png", "https://img.example/b.png"]);
+  assert.match(formatCompletedImageToolResult(result), /a\.png[\s\S]*b\.png/);
+});
+
+test("image URLs still finalize when the client omits tool name metadata", () => {
+  const messages = [
+    { role: "tool", content: "图片已生成。\n![](https://img.example/orphan.png)" }
+  ];
+  const result = latestCompletedImageToolResult(messages);
+  assert.deepEqual(result, { name: "image_result", imageUrls: ["https://img.example/orphan.png"] });
+});
+
 test("an authentication request from character_save is finalized directly", () => {
   const messages = [
     { role: "assistant", tool_calls: [{ id: "call_save", type: "function", function: { name: "character_save", arguments: "{}" } }] },
