@@ -63,6 +63,24 @@ function toolResultLooksSuccessful(message) {
   return !/(?:^|\b)(?:error|failed|failure)(?:\b|:)|失败|错误|未生成|没有生成/i.test(content);
 }
 
+function toolResultTextMessages(messages = []) {
+  return messages.filter((message) => {
+    const role = toStringSafe(message?.role).toLowerCase();
+    return role === "tool" || role === "function";
+  }).map((message) => contentText(message?.content));
+}
+
+export function hasPendingJobContext(messages = []) {
+  const results = toolResultTextMessages(messages);
+  for (let index = results.length - 1; index >= 0; index -= 1) {
+    const content = results[index];
+    if (!/(?:任务码|job[_ ]?id)\s*[:：]?\s*[A-Z0-9]{5}\b/i.test(content)) continue;
+    if (/图片已生成|图像已生成|生成成功|处理完成|任务已完成|已经完成/i.test(content)) return false;
+    return /还在画|正在生成|处理中|排队|pending|任务码/i.test(content);
+  }
+  return false;
+}
+
 export function completedToolNamesSinceLatestUser(messages = []) {
   const start = latestUserMessageIndex(messages);
   if (start < 0) return new Set();
@@ -91,14 +109,20 @@ export function blockedToolNamesForRequest(messages = []) {
   const blocked = new Set(completed);
   if ([...completed].some((name) => IMAGE_GENERATION_TOOL_NAMES.has(name))) {
     IMAGE_GENERATION_TOOL_NAMES.forEach((name) => blocked.add(name));
+    blocked.add("check_job");
   }
   return blocked;
 }
 
 export function filterToolsForRequest(tools = [], messages = []) {
   const blocked = blockedToolNamesForRequest(messages);
-  if (!blocked.size) return tools;
-  return tools.filter((tool) => !blocked.has(getToolName(tool)));
+  const pendingJob = hasPendingJobContext(messages);
+  return tools.filter((tool) => {
+    const name = getToolName(tool);
+    if (blocked.has(name)) return false;
+    if (name === "check_job" && !pendingJob) return false;
+    return true;
+  });
 }
 
 export function limitImageGenerationCalls(calls = []) {
