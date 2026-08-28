@@ -93,6 +93,34 @@ function findTagValue(text, patterns) {
   return "";
 }
 
+function escapeRegExp(value) {
+  return toStringSafe(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function findAllowedDirectToolTag(text, allowedToolNames) {
+  let bestMatch = null;
+
+  for (const rawName of allowedToolNames ?? []) {
+    const name = toStringSafe(rawName).trim();
+    if (!name) {
+      continue;
+    }
+
+    const match = toStringSafe(text).match(
+      new RegExp(`<(?:[a-z0-9_:-]+:)?${escapeRegExp(name)}\\b[^>]*>`, "i")
+    );
+    if (!match || match.index === undefined) {
+      continue;
+    }
+
+    if (!bestMatch || match.index < bestMatch.index) {
+      bestMatch = { index: match.index, name };
+    }
+  }
+
+  return bestMatch?.name ?? "";
+}
+
 function appendMarkupValue(output, key, value) {
   if (!Object.hasOwn(output, key)) {
     output[key] = value;
@@ -178,7 +206,7 @@ function buildParsedToolCall(name, argumentsText) {
   };
 }
 
-function parseMarkupBlock(attrs, inner) {
+function parseMarkupBlock(attrs, inner, allowedToolNames) {
   const jsonTool = parseJsonObject(inner);
   const jsonName = toStringSafe(
     jsonTool?.name ?? jsonTool?.tool_name ?? jsonTool?.function_name ?? jsonTool?.function?.name
@@ -195,7 +223,8 @@ function parseMarkupBlock(attrs, inner) {
   }
 
   const attrName = attrs.match(TOOL_ATTR_PATTERN)?.[2] ?? "";
-  const name = attrName.trim() || findTagValue(inner, TOOL_NAME_PATTERNS).trim();
+  const explicitName = findTagValue(inner, TOOL_NAME_PATTERNS).trim();
+  const name = attrName.trim() || explicitName || findAllowedDirectToolTag(inner, allowedToolNames);
   if (!name) {
     return null;
   }
@@ -206,19 +235,23 @@ function parseMarkupBlock(attrs, inner) {
   return buildParsedToolCall(name, argumentsText);
 }
 
-function parseMarkupToolCalls(text) {
+function parseMarkupToolCalls(text, allowedToolNames) {
   const output = [];
   const source = normalizeProtocolMarkup(text).trim();
 
   for (const match of source.matchAll(TOOL_BLOCK_PATTERN)) {
-    const parsed = parseMarkupBlock(toStringSafe(match[2]).trim(), toStringSafe(match[3]).trim());
+    const parsed = parseMarkupBlock(
+      toStringSafe(match[2]).trim(),
+      toStringSafe(match[3]).trim(),
+      allowedToolNames
+    );
     if (parsed) {
       output.push(parsed);
     }
   }
 
   for (const match of source.matchAll(TOOL_SELFCLOSE_PATTERN)) {
-    const parsed = parseMarkupBlock(toStringSafe(match[1]).trim(), "");
+    const parsed = parseMarkupBlock(toStringSafe(match[1]).trim(), "", allowedToolNames);
     if (parsed) {
       output.push(parsed);
     }
@@ -246,5 +279,5 @@ export function parseToolCallsFromText(text, allowedToolNames = []) {
     return [];
   }
 
-  return filterAllowedToolCalls(parseMarkupToolCalls(source), allowedToolNames);
+  return filterAllowedToolCalls(parseMarkupToolCalls(source, allowedToolNames), allowedToolNames);
 }
