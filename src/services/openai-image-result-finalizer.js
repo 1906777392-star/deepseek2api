@@ -2,13 +2,43 @@ import { latestAuthInputRequest } from "./openai-auth-result-finalizer.js";
 import { IMAGE_GENERATION_TOOL_NAMES } from "./openai-tool-loop-guard.js";
 import { getToolName } from "./openai-tool-policy.js";
 
+const DIRECT_MIAOHUI_TOOL_NAMES = new Set([
+  "login",
+  "my_account",
+  "draw",
+  "redraw",
+  "photo_tool",
+  "find_style",
+  "use_style",
+  "settings",
+  "upload_image",
+  "check_job",
+  "inpaint",
+  "recharge",
+  "character_reference",
+  "comic_page",
+  "character_save",
+  "character_list",
+  "character_forget",
+  "vibe_transfer",
+  "scene_save",
+  "scene_list",
+  "scene_use",
+  "scene_forget",
+  "character_panel"
+]);
+
 function toStringSafe(value) {
   return value === null || value === undefined ? "" : String(value);
 }
 
+function jsonText(value) {
+  try { return JSON.stringify(value, null, 2); } catch { return String(value ?? ""); }
+}
+
 function textFromContent(content) {
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
+  if (!Array.isArray(content)) return content && typeof content === "object" ? jsonText(content) : "";
   return content.map((part) => {
     if (!part || typeof part !== "object") return "";
     return typeof part.text === "string" ? part.text
@@ -16,6 +46,12 @@ function textFromContent(content) {
         : typeof part.content === "string" ? part.content
           : "";
   }).filter(Boolean).join("\n");
+}
+
+function redactSensitiveResult(value) {
+  return String(value ?? "")
+    .replace(/(["']?(?:token_2|password|passwd|pwd|access[_-]?token|authorization)["']?\s*[:=：]\s*["']?)([^\s"'},，。；;！？!?]+)/gi, "$1[已隐藏]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [已隐藏]");
 }
 
 function imageUrlFromPart(part) {
@@ -69,18 +105,20 @@ export function latestCompletedImageToolResult(messages = []) {
   const role = toStringSafe(message?.role).toLowerCase();
   if (role !== "tool" && role !== "function") return null;
 
-  const authInputRequest = latestAuthInputRequest(messages);
-  if (authInputRequest) return { name: "auth_input", imageUrls: [], content: authInputRequest };
-
   const namesById = toolNameByCallId(messages, lastIndex);
   const name = toStringSafe(message?.name).trim()
     || namesById.get(toStringSafe(message?.tool_call_id).trim())
     || "";
-  if (!IMAGE_GENERATION_TOOL_NAMES.has(name)) return null;
+  if (!DIRECT_MIAOHUI_TOOL_NAMES.has(name)) return null;
+
+  const authInputRequest = latestAuthInputRequest(messages);
+  if (authInputRequest) return { name: "auth_input", imageUrls: [], content: authInputRequest };
 
   const imageUrls = extractImageUrls(message?.content);
-  if (!imageUrls.length) return null;
-  return { name, imageUrls };
+  if (IMAGE_GENERATION_TOOL_NAMES.has(name) && imageUrls.length) return { name, imageUrls };
+
+  const content = redactSensitiveResult(textFromContent(message?.content).trim());
+  return { name, imageUrls: [], content: content || "工具已完成。" };
 }
 
 export function formatCompletedImageToolResult(result) {
