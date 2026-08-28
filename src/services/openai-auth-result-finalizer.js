@@ -1,12 +1,26 @@
 const AUTHENTICATED_TOOL_NAMES = new Set([
   "login",
+  "my_account",
   "draw",
   "redraw",
   "photo_tool",
+  "find_style",
+  "use_style",
+  "settings",
+  "upload_image",
+  "check_job",
   "inpaint",
+  "recharge",
   "character_reference",
   "comic_page",
+  "character_save",
+  "character_list",
+  "character_forget",
   "vibe_transfer",
+  "scene_save",
+  "scene_list",
+  "scene_use",
+  "scene_forget",
   "character_panel"
 ]);
 

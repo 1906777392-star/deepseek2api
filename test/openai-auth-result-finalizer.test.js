@@ -17,6 +17,15 @@ test("draw result asking for a login code becomes a direct authentication questi
   assert.equal(result, "还没有登录。把喵绘密码发给我；如果你已经有登录码，也可以直接发登录码。");
 });
 
+test("character_save authentication requests are handled like drawing tools", () => {
+  const result = latestAuthInputRequest([
+    { role: "assistant", tool_calls: [{ id: "call_save", type: "function", function: { name: "character_save", arguments: "{}" } }] },
+    { role: "tool", tool_call_id: "call_save", content: "还没有登录，请提供密码后继续。" }
+  ]);
+
+  assert.equal(result, "还没有登录。把喵绘密码发给我，我会先登录再继续刚才的操作。");
+});
+
 test("login result asking for an invite code asks only for that missing value", () => {
   const result = latestAuthInputRequest([
     { role: "assistant", tool_calls: [{ id: "call_login", type: "function", function: { name: "login", arguments: "{}" } }] },
@@ -26,7 +35,7 @@ test("login result asking for an invite code asks only for that missing value", 
   assert.equal(result, "还缺邀请码。把邀请码发给我，我会接着完成登录。");
 });
 
-test("successful login and ordinary tool failures are not intercepted", () => {
+test("successful login and ordinary tool failures are not treated as missing authentication", () => {
   assert.equal(latestAuthInputRequest([{ role: "tool", content: "登录成功，token_2 已恢复" }]), null);
   assert.equal(latestAuthInputRequest([{ role: "tool", content: "生成失败：上游暂时繁忙" }]), null);
   assert.equal(latestAuthInputRequest([{ role: "user", content: "这是密码" }]), null);
