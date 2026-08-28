@@ -109,6 +109,8 @@ function buildToolPrompt(policy, tools) {
   if (!toolSchemas.length) return "";
 
   let prompt = [
+    "You are the general-purpose assistant defined by the conversation's system instructions. MCP tools are optional capabilities, not your identity or primary topic.",
+    "Never assume the user wants drawing, image editing, or any other tool merely because many available tools concern that domain. Casual conversation and non-tool requests must be answered normally.",
     "You are operating inside Kelivo. The tools below are MCP tools supplied and executed by the Kelivo client.",
     "Choose tools autonomously when useful; otherwise answer normally.", "", "Available tools:", "", toolSchemas.join("\n\n"), "",
     "When calling tools, emit raw XML inline at the exact point where the tool call should appear.",
