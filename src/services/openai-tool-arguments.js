@@ -1,144 +1,84 @@
-import { recoverLoginArguments } from "./openai-login-arguments.js";
 import { getToolFunction, getToolName } from "./openai-tool-policy.js";
 
-const IMAGE_TOOLS = new Set(["draw", "redraw", "photo_tool", "inpaint", "character_reference", "comic_page", "vibe_transfer", "character_panel"]);
-const SENSITIVE_TOKEN_KEYS = new Set(["token", "token_2", "login_code", "登录码"]);
-
-function textOf(message) {
-  if (typeof message?.content === "string") return message.content.trim();
-  if (!Array.isArray(message?.content)) return "";
-  return message.content.map((part) => part?.text ?? part?.output_text ?? part?.content ?? "").filter(Boolean).join("\n").trim();
-}
-
-function latestUserText(messages = []) {
-  const message = [...messages].reverse().find((item) => String(item?.role ?? "").toLowerCase() === "user");
-  return textOf(message);
-}
-
-function parseObject(value) {
+function parseArguments(call) {
+  const raw = typeof call?.argumentsText === "string" ? call.argumentsText : JSON.stringify(call?.input ?? {});
   try {
-    const parsed = typeof value === "string" ? JSON.parse(value || "{}") : value;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch { return {}; }
+    const value = JSON.parse(raw || "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return { error: "parameters must be a JSON object", value: null };
+    return { error: "", value };
+  } catch {
+    return { error: "parameters are not valid JSON", value: null };
+  }
 }
 
 function isMissing(value) {
   return value === undefined || value === null || (typeof value === "string" && !value.trim());
 }
 
-function findNestedToken(value) {
-  if (!value || typeof value !== "object") return "";
-  if (Array.isArray(value)) {
-    for (const item of value) { const found = findNestedToken(item); if (found) return found; }
-    return "";
+function matchesType(value, type) {
+  if (!type) return true;
+  if (type === "array") return Array.isArray(value);
+  if (type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (type === "integer") return Number.isInteger(value);
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "string") return typeof value === "string";
+  return true;
+}
+
+function validateValue(value, schema, path, issues) {
+  if (!schema || typeof schema !== "object") return;
+  if (Array.isArray(schema.enum) && !schema.enum.includes(value)) issues.push(`${path} must be one of: ${schema.enum.join(", ")}`);
+  if (!matchesType(value, schema.type)) {
+    issues.push(`${path} must be ${schema.type}`);
+    return;
   }
-  for (const [key, item] of Object.entries(value)) {
-    if (SENSITIVE_TOKEN_KEYS.has(String(key).toLowerCase()) && typeof item === "string" && item.trim()) return item.trim();
-    const found = findNestedToken(item);
-    if (found) return found;
-  }
-  return "";
+  if (schema.type === "object") validateObject(value, schema, path, issues);
+  if (schema.type === "array" && schema.items) value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, issues));
 }
 
-function tokenFromText(text) {
-  const source = String(text ?? "").trim();
-  if (!source) return "";
-  try { const found = findNestedToken(JSON.parse(source)); if (found) return found; } catch {}
-  const match = source.match(/(?:"?(?:token_2|login_code|登录码)"?\s*[:=：]\s*["“]?)([^\s"”'，。；;]+)/i);
-  return match?.[1]?.trim() ?? "";
-}
-
-function latestLoginToken(messages = []) {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    const role = String(message?.role ?? "").toLowerCase();
-    if (role !== "tool" && role !== "function") continue;
-    const token = tokenFromText(textOf(message));
-    if (token) return token;
-  }
-  return "";
-}
-
-function vagueCreativeRequest(text) {
-  return /^(?:随便(?:你)?|你决定|直接做|都行|看着办|随机|whatever)[啊呀吧。！!\s]*$/i.test(String(text ?? "").trim());
-}
-
-function genericVisualDescription() {
-  return "1girl, full body, calm expression, standing in a quiet starlit field, flowing silver-white hair, dark elegant outfit, soft blue and silver moonlight, balanced composition, detailed atmospheric background";
-}
-
-function propertyDefault(name, schema, context) {
-  if (Object.hasOwn(schema ?? {}, "default")) return schema.default;
-  if (Object.hasOwn(schema ?? {}, "const")) return schema.const;
-
-  if (name === "coherence_checked") return true;
-  if (name === "count") return 1;
-  if (name === "skeleton_strength") return 0.95;
-  if (name === "vibe_strength") return 0.6;
-  if (name === "information_extracted") return 1;
-  if (name === "token_2" || name === "token") return context.loginToken || "";
-  if (name === "invite_code" || name === "avoid" || name === "scene" || name === "character" || name === "second_character_image") return "";
-  if (name === "characters" || name === "blocking" || name === "reminders" || name === "reviewers") return [];
-  if (name === "aspect_2" || name === "aspect") {
-    const values = schema?.enum ?? [];
-    return values.includes("竖图") ? "竖图" : values[0];
-  }
-  if (name === "change_scale") return schema?.enum?.includes("中等") ? "中等" : schema?.enum?.[0];
-  if (name === "fidelity") return schema?.enum?.includes("identity_only") ? "identity_only" : schema?.enum?.[0];
-  if (name === "layout") return schema?.enum?.includes("4_grid") ? "4_grid" : schema?.enum?.[0];
-  if (name === "english_visual_description" && IMAGE_TOOLS.has(context.toolName) && vagueCreativeRequest(context.userText)) return genericVisualDescription();
-
-  return undefined;
-}
-
-function fillSchemaDefaults(args, schema, context) {
-  const output = { ...args };
-  const properties = schema?.properties ?? {};
-  for (const [name, propertySchema] of Object.entries(properties)) {
-    if (!isMissing(output[name])) continue;
-    const value = propertyDefault(name, propertySchema, context);
-    if (value !== undefined) output[name] = value;
-  }
-
+function validateObject(value, schema, path, issues) {
   const required = Array.isArray(schema?.required) ? schema.required : [];
-  const missing = required.filter((name) => isMissing(output[name]));
-  if (missing.length === 1) {
-    const name = missing[0];
-    const propertySchema = properties[name] ?? {};
-    if (propertySchema.type === "string" && context.userText && !SENSITIVE_TOKEN_KEYS.has(name)) output[name] = context.userText;
+  for (const name of required) {
+    if (isMissing(value?.[name])) issues.push(`${path ? `${path}.` : ""}${name} is required`);
   }
-  return output;
+  for (const [name, propertySchema] of Object.entries(schema?.properties ?? {})) {
+    if (value?.[name] === undefined || value?.[name] === null) continue;
+    validateValue(value[name], propertySchema, path ? `${path}.${name}` : name, issues);
+  }
 }
 
-function validateRequired(args, schema) {
-  const required = Array.isArray(schema?.required) ? schema.required : [];
-  return required.filter((name) => isMissing(args[name]));
-}
-
-export function repairToolCalls({ calls = [], tools = [], messages = [] }) {
+export function validateToolCalls({ calls = [], tools = [] }) {
   const toolByName = new Map(tools.map((tool) => [getToolName(tool), getToolFunction(tool)]).filter(([name]) => name));
-  const userText = latestUserText(messages);
-  const loginToken = latestLoginToken(messages);
-  const loginRepaired = recoverLoginArguments(calls, messages);
-  const repaired = [];
+  const valid = [];
   const rejected = [];
 
-  for (const call of loginRepaired) {
+  for (const call of calls) {
     const name = String(call?.name ?? "").trim();
-    const definition = toolByName.get(name);
-    const schema = definition?.parameters ?? {};
-    const original = parseObject(call?.argumentsText ?? call?.input);
-    const args = fillSchemaDefaults(original, schema, { toolName: name, userText, loginToken });
-    const missing = validateRequired(args, schema);
-    if (missing.length) { rejected.push({ name, missing }); continue; }
-    repaired.push({ ...call, argumentsText: JSON.stringify(args), input: args });
+    const parsed = parseArguments(call);
+    if (parsed.error) {
+      rejected.push({ name, issues: [parsed.error] });
+      continue;
+    }
+    const issues = [];
+    const schema = toolByName.get(name)?.parameters;
+    if (schema) validateObject(parsed.value, schema, "", issues);
+    if (issues.length) {
+      rejected.push({ name, issues });
+      continue;
+    }
+    valid.push({ ...call, argumentsText: JSON.stringify(parsed.value), input: parsed.value });
   }
 
-  return { calls: repaired, rejected };
+  return { calls: rejected.length ? [] : valid, rejected };
 }
 
 export function formatRejectedToolCalls(rejected = []) {
   if (!rejected.length) return "";
-  const details = rejected.map((item) => `${item.name}: ${item.missing.join(", ")}`).join("；");
-  return `工具调用缺少必要参数（${details}），请补充这些信息后再执行。`;
+  const details = rejected.map((item) => `${item.name || "unknown"}: ${item.issues.join(", ")}`).join("；");
+  return `AI 连续两次都没有生成完整工具参数（${details}）。请补充确实无法从上下文判断的信息后再试。`;
+}
+
+export function summarizeRejectedToolCalls(rejected = []) {
+  return rejected.map((item) => `${item.name || "unknown"}: ${item.issues.join("; ")}`).join(" | ");
 }
