@@ -1,3 +1,4 @@
+import { latestAuthInputRequest } from "./openai-auth-result-finalizer.js";
 import { IMAGE_GENERATION_TOOL_NAMES } from "./openai-tool-loop-guard.js";
 import { getToolName } from "./openai-tool-policy.js";
 
@@ -68,6 +69,9 @@ export function latestCompletedImageToolResult(messages = []) {
   const role = toStringSafe(message?.role).toLowerCase();
   if (role !== "tool" && role !== "function") return null;
 
+  const authInputRequest = latestAuthInputRequest(messages);
+  if (authInputRequest) return { name: "auth_input", imageUrls: [], content: authInputRequest };
+
   const namesById = toolNameByCallId(messages, lastIndex);
   const name = toStringSafe(message?.name).trim()
     || namesById.get(toStringSafe(message?.tool_call_id).trim())
@@ -80,6 +84,7 @@ export function latestCompletedImageToolResult(messages = []) {
 }
 
 export function formatCompletedImageToolResult(result) {
+  if (result?.content) return result.content;
   if (!result?.imageUrls?.length) return "";
   return ["已经完成。", "", ...result.imageUrls.map((url) => `![](${url})`)].join("\n");
 }
