@@ -1,7 +1,5 @@
-export function isRequiredToolPolicy() {
-  // Required/forced policies may still be validated when explicitly supplied,
-  // but the bridge does not retry a response that omitted tool use entirely.
-  return false;
+export function isRequiredToolPolicy(policy) {
+  return policy?.mode === "required" || policy?.mode === "forced";
 }
 
 export function buildToolCorrectionPrompt(policy) {
@@ -11,7 +9,7 @@ export function buildToolCorrectionPrompt(policy) {
   return [
     "SYSTEM: Your previous response failed because it did not contain a valid declared tool call.",
     target,
-    "Do not browse internally, answer the user, explain, plan, or include reasoning.",
+    "Do not browse internally, answer the user, explain, plan, promise, simulate, or describe the call.",
     "Return only one raw XML tool-call block."
   ].join("\n");
 }
