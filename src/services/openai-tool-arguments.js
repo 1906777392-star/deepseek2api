@@ -1,3 +1,4 @@
+import { recoverContextualToolArguments } from "./openai-tool-context.js";
 import { getToolFunction, getToolName } from "./openai-tool-policy.js";
 
 function parseArguments(call) {
@@ -6,9 +7,7 @@ function parseArguments(call) {
     const value = JSON.parse(raw || "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return { error: "parameters must be a JSON object", value: null };
     return { error: "", value };
-  } catch {
-    return { error: "parameters are not valid JSON", value: null };
-  }
+  } catch { return { error: "parameters are not valid JSON", value: null }; }
 }
 
 function matchesType(value, type) {
@@ -25,19 +24,14 @@ function matchesType(value, type) {
 function validateValue(value, schema, path, issues) {
   if (!schema || typeof schema !== "object") return;
   if (Array.isArray(schema.enum) && !schema.enum.includes(value)) issues.push(`${path} must be one of: ${schema.enum.join(", ")}`);
-  if (!matchesType(value, schema.type)) {
-    issues.push(`${path} must be ${schema.type}`);
-    return;
-  }
+  if (!matchesType(value, schema.type)) { issues.push(`${path} must be ${schema.type}`); return; }
   if (schema.type === "object") validateObject(value, schema, path, issues);
   if (schema.type === "array" && schema.items) value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, issues));
 }
 
 function validateObject(value, schema, path, issues) {
   const required = Array.isArray(schema?.required) ? schema.required : [];
-  for (const name of required) {
-    if (!Object.hasOwn(value ?? {}, name)) issues.push(`${path ? `${path}.` : ""}${name} is required`);
-  }
+  for (const name of required) if (!Object.hasOwn(value ?? {}, name)) issues.push(`${path ? `${path}.` : ""}${name} is required`);
   for (const [name, propertySchema] of Object.entries(schema?.properties ?? {})) {
     if (!Object.hasOwn(value ?? {}, name) || value[name] === null) continue;
     validateValue(value[name], propertySchema, path ? `${path}.${name}` : name, issues);
@@ -45,27 +39,21 @@ function validateObject(value, schema, path, issues) {
 }
 
 export function validateToolCalls({ calls = [], tools = [] }) {
+  const recoveredCalls = recoverContextualToolArguments(calls, tools);
   const toolByName = new Map(tools.map((tool) => [getToolName(tool), getToolFunction(tool)]).filter(([name]) => name));
   const valid = [];
   const rejected = [];
 
-  for (const call of calls) {
+  for (const call of recoveredCalls) {
     const name = String(call?.name ?? "").trim();
     const parsed = parseArguments(call);
-    if (parsed.error) {
-      rejected.push({ name, issues: [parsed.error] });
-      continue;
-    }
+    if (parsed.error) { rejected.push({ name, issues: [parsed.error] }); continue; }
     const issues = [];
     const schema = toolByName.get(name)?.parameters;
     if (schema) validateObject(parsed.value, schema, "", issues);
-    if (issues.length) {
-      rejected.push({ name, issues });
-      continue;
-    }
+    if (issues.length) { rejected.push({ name, issues }); continue; }
     valid.push({ ...call, argumentsText: JSON.stringify(parsed.value), input: parsed.value });
   }
-
   return { calls: rejected.length ? [] : valid, rejected };
 }
 
