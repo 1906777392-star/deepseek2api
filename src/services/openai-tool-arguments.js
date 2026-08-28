@@ -38,6 +38,14 @@ function validateObject(value, schema, path, issues) {
   }
 }
 
+function validateSemanticArguments(name, value, issues) {
+  if (name !== "check_job") return;
+  const jobId = String(value?.job_id ?? value?.code ?? value?.任务码 ?? "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{5}$/.test(jobId)) {
+    issues.push("job_id must be the real 5-character task code returned by the drawing tool; a login token is not a task code");
+  }
+}
+
 export function validateToolCalls({ calls = [], tools = [] }) {
   const recoveredCalls = recoverContextualToolArguments(calls, tools);
   const toolByName = new Map(tools.map((tool) => [getToolName(tool), getToolFunction(tool)]).filter(([name]) => name));
@@ -51,6 +59,7 @@ export function validateToolCalls({ calls = [], tools = [] }) {
     const issues = [];
     const schema = toolByName.get(name)?.parameters;
     if (schema) validateObject(parsed.value, schema, "", issues);
+    validateSemanticArguments(name, parsed.value, issues);
     if (issues.length) { rejected.push({ name, issues }); continue; }
     valid.push({ ...call, argumentsText: JSON.stringify(parsed.value), input: parsed.value });
   }
