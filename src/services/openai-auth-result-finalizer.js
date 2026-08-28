@@ -1,3 +1,15 @@
+const AUTHENTICATED_TOOL_NAMES = new Set([
+  "login",
+  "draw",
+  "redraw",
+  "photo_tool",
+  "inpaint",
+  "character_reference",
+  "comic_page",
+  "vibe_transfer",
+  "character_panel"
+]);
+
 function toStringSafe(value) {
   if (value === null || value === undefined) return "";
   if (typeof value === "string") return value;
@@ -18,6 +30,23 @@ function textFromContent(content) {
   return toStringSafe(content);
 }
 
+function toolNameForResult(messages, resultIndex) {
+  const result = messages[resultIndex];
+  const explicitName = toStringSafe(result?.name).trim();
+  if (explicitName) return explicitName;
+  const callId = toStringSafe(result?.tool_call_id).trim();
+  if (!callId) return "";
+
+  for (let index = resultIndex - 1; index >= 0; index -= 1) {
+    const calls = messages[index]?.tool_calls;
+    if (!Array.isArray(calls)) continue;
+    const call = calls.find((item) => toStringSafe(item?.id).trim() === callId);
+    const name = toStringSafe(call?.function?.name ?? call?.name).trim();
+    if (name) return name;
+  }
+  return "";
+}
+
 function asksFor(value, text) {
   const request = new RegExp(`(?:请|需要|缺少|还缺|必须|填入|提供|发来|发给)[^。；;！!？?]{0,32}${value}|${value}[^。；;！!？?]{0,32}(?:填入|提供|发来|发给|才能|需要|必填)`, "i");
   return request.test(text);
@@ -31,6 +60,9 @@ export function latestAuthInputRequest(messages = []) {
   const message = messages[lastIndex];
   const role = toStringSafe(message?.role).trim().toLowerCase();
   if (role !== "tool" && role !== "function") return null;
+
+  const toolName = toolNameForResult(messages, lastIndex);
+  if (!AUTHENTICATED_TOOL_NAMES.has(toolName)) return null;
 
   const text = textFromContent(message?.content).trim();
   if (!text || /登录成功|已登录|认证成功/i.test(text)) return null;
