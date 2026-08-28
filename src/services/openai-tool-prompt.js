@@ -23,27 +23,34 @@ function imageUrlFromPart(item) {
 }
 
 function normalizeContentParts(content) {
-  if (typeof content === "string") return { text: content, imageUrls: [] };
-  if (!Array.isArray(content)) return { text: "", imageUrls: [] };
+  if (typeof content === "string") return { text: content, hasImage: false };
+  if (!Array.isArray(content)) return { text: "", hasImage: false };
   const textParts = [];
-  const imageUrls = [];
+  let hasImage = false;
   content.forEach((item) => {
     if (!item || typeof item !== "object") return;
     if (typeof item.text === "string") textParts.push(item.text);
     else if (typeof item.output_text === "string") textParts.push(item.output_text);
     else if (typeof item.content === "string") textParts.push(item.content);
-    const imageUrl = imageUrlFromPart(item);
-    if (imageUrl) imageUrls.push(imageUrl);
+    if (imageUrlFromPart(item)) hasImage = true;
   });
-  return { text: textParts.filter(Boolean).join("\n"), imageUrls: [...new Set(imageUrls)] };
+  return { text: textParts.filter(Boolean).join("\n"), hasImage };
 }
 
-function normalizeContentText(content) {
+function removeImageMarkdown(text) {
+  return toStringSafe(text)
+    .replace(/!\[[^\]]*]\(\s*(?:<[^>]+>|[^\s)]+)\s*\)/g, "[previous image attachment omitted]")
+    .replace(/https?:\/\/[^\s<>"')]+\.(?:png|jpe?g|webp|gif)(?:\?[^\s<>"')]*)?/gi, "[previous image attachment omitted]");
+}
+
+function normalizeContentText(content, { currentUserImage = false } = {}) {
   const normalized = normalizeContentParts(content);
-  const markdownImages = normalized.imageUrls
-    .filter((url) => /^https?:\/\//i.test(url))
-    .map((url) => `![](${url})`);
-  return [normalized.text, ...markdownImages].filter(Boolean).join("\n");
+  const text = removeImageMarkdown(normalized.text).trim();
+  if (!normalized.hasImage) return text;
+  const notice = currentUserImage
+    ? "[An image is attached to this current user turn and is provided separately to the model.]"
+    : "[A previous image attachment existed in this historical turn; it is not attached to the current request.]";
+  return [text, notice].filter(Boolean).join("\n");
 }
 
 function formatPromptToolCalls(toolCalls, toolNameById) {
@@ -59,8 +66,8 @@ function formatPromptToolCalls(toolCalls, toolNameById) {
   return blocks.length ? `<tool_calls>\n${blocks.join("\n")}\n</tool_calls>` : "";
 }
 
-function normalizeAssistantPromptContent(message, toolNameById) {
-  const content = normalizeContentText(message?.content).trim();
+function normalizeAssistantPromptContent(message, toolNameById, isCurrentUserTurn = false) {
+  const content = normalizeContentText(message?.content, { currentUserImage: isCurrentUserTurn }).trim();
   const toolHistory = formatPromptToolCalls(message?.tool_calls, toolNameById);
   if (!content) return toolHistory;
   if (!toolHistory) return content;
@@ -68,14 +75,10 @@ function normalizeAssistantPromptContent(message, toolNameById) {
 }
 
 function normalizeToolPromptContent(message, toolNameById) {
-  const normalized = normalizeContentParts(message?.content);
-  const markdownImages = normalized.imageUrls
-    .filter((url) => /^https?:\/\//i.test(url))
-    .map((url) => `![](${url})`);
-  const content = [normalized.text.trim(), ...markdownImages].filter(Boolean).join("\n") || "null";
+  const content = normalizeContentText(message?.content).trim() || "null";
   const toolName = toolNameById.get(toStringSafe(message?.tool_call_id).trim()) || toStringSafe(message?.name).trim();
-  const imageNotice = markdownImages.length
-    ? "The tool returned an actual image attachment. Treat the image operation as successful even if diagnostic text also mentions an upstream fallback, quota, credit, or 402 error. Present each image below to the user exactly once."
+  const imageNotice = content.includes("previous image attachment omitted")
+    ? "The tool returned an image attachment in an earlier turn. It is historical context only and is not attached to the current request."
     : "";
   const result = [imageNotice, content].filter(Boolean).join("\n");
   return toolName ? `Tool result for ${toolName}:\n${result}` : result;
@@ -85,14 +88,22 @@ function normalizeMessageRole(role) { return role === "developer" ? "system" : r
 
 function normalizeMessagesForPrompt(messages) {
   const toolNameById = new Map();
-  return (messages ?? []).flatMap((message) => {
+  let latestUserIndex = -1;
+  for (let index = (messages ?? []).length - 1; index >= 0; index -= 1) {
+    if (normalizeMessageRole(toStringSafe(messages[index]?.role).trim().toLowerCase()) === "user") {
+      latestUserIndex = index;
+      break;
+    }
+  }
+
+  return (messages ?? []).flatMap((message, index) => {
     const role = normalizeMessageRole(toStringSafe(message?.role).trim().toLowerCase() || "user");
     if (role === "assistant") {
       const content = normalizeAssistantPromptContent(message, toolNameById);
       return content ? [{ role, content }] : [];
     }
     if (role === "tool" || role === "function") return [{ role: "tool", content: normalizeToolPromptContent(message, toolNameById) }];
-    return [{ role, content: normalizeContentText(message?.content) }];
+    return [{ role, content: normalizeContentText(message?.content, { currentUserImage: index === latestUserIndex }) }];
   });
 }
 

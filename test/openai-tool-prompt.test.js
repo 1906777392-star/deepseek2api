@@ -34,7 +34,7 @@ const loginTool = {
   }
 };
 
-test("tool image attachments become markdown output instructions", () => {
+test("historical tool image attachments are not replayed as current prompt images", () => {
   const messages = [
     { role: "user", content: "轻微改一下" },
     { role: "assistant", tool_calls: [{ id: "call_redraw", type: "function", function: { name: "redraw", arguments: "{}" } }] },
@@ -43,16 +43,35 @@ test("tool image attachments become markdown output instructions", () => {
       tool_call_id: "call_redraw",
       name: "redraw",
       content: [
-        { type: "text", text: "图片已生成，但备用上游返回 402 Insufficient Gems" },
+        { type: "text", text: "图片已生成" },
         { type: "image_url", image_url: { url: "https://img.example/result.png" } }
       ]
-    }
+    },
+    { role: "user", content: "这次不要看图，直接告诉我下一步" }
   ];
 
   const result = buildOpenAiPrompt({ messages, tools: [redrawTool], toolChoice: "auto" });
-  assert.match(result.prompt, /actual image attachment/i);
-  assert.match(result.prompt, /!\[\]\(https:\/\/img\.example\/result\.png\)/);
-  assert.match(result.prompt, /Treat the image operation as successful/i);
+  assert.doesNotMatch(result.prompt, /!\[\]\(https:\/\/img\.example\/result\.png\)/);
+  assert.match(result.prompt, /historical turn|previous image attachment omitted/i);
+  assert.match(result.prompt, /图片已生成/);
+});
+
+test("current user image is represented as a separate attachment, not markdown in the prompt", () => {
+  const result = buildOpenAiPrompt({
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: "请看这张图" },
+        { type: "image_url", image_url: { url: "https://img.example/current.png" } }
+      ]
+    }],
+    tools: [redrawTool],
+    toolChoice: "auto"
+  });
+
+  assert.match(result.prompt, /请看这张图/);
+  assert.match(result.prompt, /attached to this current user turn/i);
+  assert.doesNotMatch(result.prompt, /!\[\]\(https:\/\/img\.example\/current\.png\)/);
 });
 
 test("tool prompt identifies Kelivo and keeps secrets inside required tool parameters", () => {
