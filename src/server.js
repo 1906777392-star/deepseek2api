@@ -8,6 +8,11 @@ import { parseCookies, sendError, serveStaticFile } from "./utils/http.js";
 function requestNeedsStore(pathname) { return pathname.startsWith("/api/") || pathname.startsWith("/proxy/") || pathname.startsWith("/v1/") || pathname === "/models" || pathname === "/models/"; }
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`); request.cookies = parseCookies(request);
+  // Vercel rewrites /v1/:path* to /api/:path*. Restore only the two
+  // OpenAI endpoints; they still require a valid API key, not a login cookie.
+  if (/^\/api\/(models|chat\/completions)\/?$/.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/^\/api\//, "/v1/");
+  }
   response.setHeader("access-control-allow-origin", "*"); response.setHeader("access-control-allow-headers", "content-type, authorization, x-proxy-account-id, x-conversation-id, x-kelivo-conversation-id, x-client-conversation-id"); response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
   const handleRequest = async () => { if (url.pathname.startsWith("/api/")) { const handled = await handleApiRequest(request, response, url); if (!handled) sendError(response, 404, "API route not found"); return; } if (url.pathname.startsWith("/proxy/")) { await handleProxyRequest(request, response, url, config.allowedProxyPaths); return; } if (url.pathname.startsWith("/v1/") || url.pathname === "/models" || url.pathname === "/models/") { const handled = await handleOpenAiRequest(request, response, url); if (!handled) sendError(response, 404, "OpenAI route not found"); return; } if (!serveStaticFile(request, response, url.pathname)) sendError(response, 404, "Page not found"); };
