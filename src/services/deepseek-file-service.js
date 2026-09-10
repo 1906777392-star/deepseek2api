@@ -60,26 +60,6 @@ async function resolveImageInput(input, index) {
     : downloadRemoteImage(url, index);
 }
 
-async function forkVisionFile({ account, fileId }) {
-  const { response } = await proxyDeepseekRequest({
-    account,
-    method: "POST",
-    path: "/file/fork_file_task",
-    body: Buffer.from(JSON.stringify({ file_id: fileId, to_model_type: "vision" })),
-    headers: { "content-type": "application/json" }
-  });
-
-  const payload = await response.json();
-  const bizData = payload?.data?.biz_data ?? {};
-  const forkedId = bizData.id || bizData.file_id;
-
-  if (!response.ok || payload?.data?.biz_code !== 0 || !forkedId) {
-    throw new Error(payload?.data?.biz_msg || payload?.msg || "DeepSeek vision file fork failed");
-  }
-
-  return forkedId;
-}
-
 function findFileRecord(payload, fileId) {
   const bizData = payload?.data?.biz_data ?? {};
   const candidates = [
@@ -111,7 +91,7 @@ async function waitForVisionFile({ account, fileId }) {
       const status = String(record?.status ?? "").toUpperCase();
       if (status === "SUCCESS" || status === "COMPLETED" || (!status && record)) return fileId;
       if (["CONTENT_EMPTY", "FAILED", "ERROR", "PARSE_FAILED"].includes(status)) {
-        throw new Error(`DeepSeek vision file parsing failed: ${status}`);
+        throw new Error(`DeepSeek image file parsing failed: ${status}`);
       }
     }
 
@@ -142,8 +122,8 @@ async function uploadVisionImage({ account, image, sessionId }) {
     throw new Error(payload?.data?.biz_msg || payload?.msg || "DeepSeek image upload failed");
   }
 
-  const forkedId = await forkVisionFile({ account, fileId });
-  return waitForVisionFile({ account, fileId: forkedId });
+  // Reference the original upload; do not fork it into the retired vision path.
+  return waitForVisionFile({ account, fileId });
 }
 
 async function mapWithConcurrency(items, limit, mapper) {

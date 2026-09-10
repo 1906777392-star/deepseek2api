@@ -2,17 +2,15 @@ const DEFAULT_OPENAI_MODEL = "deepseek-chat";
 const MODEL_CREATED_AT = 0;
 
 const OPENAI_MODELS = Object.freeze([
-  Object.freeze({ id: "deepseek-chat", modelType: "default", thinkingEnabled: false, searchEnabled: false, vision: false, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-chat-search", modelType: "default", thinkingEnabled: false, searchEnabled: true, vision: false, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-reasoner", modelType: "default", thinkingEnabled: true, searchEnabled: false, vision: false, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-reasoner-search", modelType: "default", thinkingEnabled: true, searchEnabled: true, vision: false, supportsUploads: true }),
-  // Expert models do not receive the original upload directly. The completion
-  // runner first asks the disposable vision component for observations, then
-  // gives only those observations to the selected Expert model.
-  Object.freeze({ id: "deepseek-chat-expert", modelType: "expert", thinkingEnabled: false, searchEnabled: false, vision: false, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-reasoner-expert", modelType: "expert", thinkingEnabled: true, searchEnabled: false, vision: false, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-vision", modelType: "vision", thinkingEnabled: false, searchEnabled: false, vision: true, supportsUploads: true }),
-  Object.freeze({ id: "deepseek-vision-reasoner", modelType: "vision", thinkingEnabled: true, searchEnabled: false, vision: true, supportsUploads: true })
+  Object.freeze({ id: "deepseek-chat", modelType: "default", thinkingEnabled: false, searchEnabled: false, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-chat-search", modelType: "default", thinkingEnabled: false, searchEnabled: true, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-reasoner", modelType: "default", thinkingEnabled: true, searchEnabled: false, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-reasoner-search", modelType: "default", thinkingEnabled: true, searchEnabled: true, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-chat-expert", modelType: "expert", thinkingEnabled: false, searchEnabled: false, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-reasoner-expert", modelType: "expert", thinkingEnabled: true, searchEnabled: false, vision: true, supportsUploads: true }),
+  // Preserve existing client IDs as aliases of the unified default model.
+  Object.freeze({ id: "deepseek-vision", modelType: "default", thinkingEnabled: false, searchEnabled: false, vision: true, supportsUploads: true }),
+  Object.freeze({ id: "deepseek-vision-reasoner", modelType: "default", thinkingEnabled: true, searchEnabled: false, vision: true, supportsUploads: true })
 ]);
 
 const OPENAI_MODEL_MAP = Object.freeze(
