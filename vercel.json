@@ -6,8 +6,8 @@
     }
   },
   "rewrites": [
-    { "source": "/v1/:path*", "destination": "/api/openai/:path*" },
-    { "source": "/models", "destination": "/api/openai/models" },
+    { "source": "/v1/:path*", "destination": "/api/v1/:path*" },
+    { "source": "/models", "destination": "/api/models" },
     { "source": "/proxy/:path*", "destination": "/api/proxy/:path*" }
   ]
 }
