@@ -8,7 +8,6 @@ import { parseCookies, sendError } from "../src/utils/http.js";
 export default async function handler(request, response) {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   request.cookies = parseCookies(request);
-
   response.setHeader("access-control-allow-origin", "*");
   response.setHeader("access-control-allow-headers", "content-type, authorization, x-proxy-account-id, x-conversation-id, x-kelivo-conversation-id, x-client-conversation-id");
   response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
@@ -16,14 +15,15 @@ export default async function handler(request, response) {
 
   try {
     await runWithStore(async () => {
-      if (/^\/api\/v1\//.test(url.pathname)) {
-        url.pathname = url.pathname.replace(/^\/api/, "");
-        const handled = await handleOpenAiRequest(request, response, url);
-        if (!handled) sendError(response, 404, "OpenAI route not found");
-        return;
-      }
-      if (url.pathname === "/api/models" || url.pathname === "/api/models/") {
-        url.pathname = "/models";
+      const isOpenAiPath = url.pathname.startsWith("/v1/")
+        || url.pathname === "/models"
+        || url.pathname === "/models/"
+        || url.pathname.startsWith("/api/v1/")
+        || url.pathname === "/api/models"
+        || url.pathname === "/api/models/";
+      if (isOpenAiPath) {
+        if (url.pathname.startsWith("/api/v1/")) url.pathname = url.pathname.replace(/^\/api/, "");
+        if (url.pathname === "/api/models" || url.pathname === "/api/models/") url.pathname = "/models";
         const handled = await handleOpenAiRequest(request, response, url);
         if (!handled) sendError(response, 404, "OpenAI route not found");
         return;
