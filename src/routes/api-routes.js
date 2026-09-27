@@ -6,16 +6,11 @@ import { sendError } from "../utils/http.js";
 
 export async function handleApiRequest(request, response, url) {
   const session = resolveSession(request);
-  const handledPublicRoute = await handlePublicApiRequest({
-    request,
-    response,
-    session,
-    url
-  });
+  const handledPublicRoute = await handlePublicApiRequest({ request, response, session, url });
   if (handledPublicRoute) return true;
 
   if (!session) {
-    sendError(response, 401, `Unauthorized [${url.pathname}]`);
+    sendError(response, 401, "Unauthorized");
     return true;
   }
 
