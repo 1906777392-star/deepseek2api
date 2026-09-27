@@ -57,7 +57,7 @@ function handleLogoutRequest(response, session) {
 
 export async function handlePublicApiRequest({ request, response, session, url }) {
   if (request.method === "GET" && url.pathname === "/api/revision") {
-    sendJson(response, 200, { revision: "worker-server-route-fix-20260927-06" });
+    sendJson(response, 200, { revision: "worker-server-route-fix-20260927-07" });
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/me") {
