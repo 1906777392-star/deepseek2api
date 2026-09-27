@@ -12,30 +12,17 @@ export async function handleApiRequest(request, response, url) {
     session,
     url
   });
-  if (handledPublicRoute) {
-    return true;
-  }
+  if (handledPublicRoute) return true;
 
   if (!session) {
-    sendError(response, 401, "Unauthorized");
+    sendError(response, 401, `Unauthorized [${url.pathname}]`);
     return true;
   }
 
   if (session.role === "admin") {
-    const handledAdminRoute = await handleAdminApiRequest({
-      request,
-      response,
-      url
-    });
-    if (handledAdminRoute) {
-      return true;
-    }
+    const handledAdminRoute = await handleAdminApiRequest({ request, response, url });
+    if (handledAdminRoute) return true;
   }
 
-  return handlePrivateApiRequest({
-    request,
-    response,
-    session,
-    url
-  });
+  return handlePrivateApiRequest({ request, response, session, url });
 }

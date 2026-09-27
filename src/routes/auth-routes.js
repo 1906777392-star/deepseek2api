@@ -36,7 +36,7 @@ function handleLogoutRequest(response, session) {
 }
 export async function handlePublicApiRequest({ request, response, session, url }) {
   if (request.method === "GET" && url.pathname === "/api/revision") {
-    sendJson(response, 200, { revision: "vercel-route-probe-20260927-04" });
+    sendJson(response, 200, { revision: "api-path-diagnostic-20260927-05" });
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/me") {
