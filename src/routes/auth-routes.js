@@ -16,12 +16,10 @@ function sendSessionPayload(response, session) {
 async function handleLoginRequest(request, response) {
   const body = await readJsonRequest(request);
   const adminSession = loginAsAdmin(body.username, body.password);
-
   if (adminSession) {
     sendSessionPayload(response, adminSession);
     return true;
   }
-
   try {
     const localSession = loginAsLocalUser(body.username, body.password);
     if (!localSession) {
@@ -59,7 +57,7 @@ function handleLogoutRequest(response, session) {
 
 export async function handlePublicApiRequest({ request, response, session, url }) {
   if (request.method === "GET" && url.pathname === "/api/revision") {
-    sendJson(response, 200, { revision: "worker-openai-route-20260927-02" });
+    sendJson(response, 200, { revision: "vercel-route-probe-20260927-03" });
     return true;
   }
   if (request.method === "GET" && url.pathname === "/api/me") {
