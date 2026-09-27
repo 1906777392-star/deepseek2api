@@ -45,12 +45,15 @@ export default async function handler(request, response) {
   response.setHeader("access-control-allow-headers", "content-type, authorization, x-proxy-account-id, x-conversation-id, x-kelivo-conversation-id, x-client-conversation-id");
   response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
 
-  if (request.query?.__mio_route_probe === ROUTE_PROBE) {
+  if (incomingUrl.searchParams.get("__mio_route_probe") === ROUTE_PROBE) {
     sendJson(response, 200, {
       entry: "api-catch-all",
       requestUrl: request.url,
       incomingPathname: incomingUrl.pathname,
+      queryKeys: Object.keys(request.query ?? {}),
       routePath: request.query?.path ?? null,
+      matchedPath: request.headers["x-matched-path"] ?? null,
+      routeMatches: request.headers["x-now-route-matches"] ?? null,
       resolvedPathname: url.pathname
     });
     return;

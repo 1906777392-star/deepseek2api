@@ -13,12 +13,17 @@ function resolvePath(request) {
 }
 
 export default async function handler(request, response) {
+  const incomingUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const resolvedPathname = resolvePath(request);
-  if (request.query?.__mio_route_probe === ROUTE_PROBE) {
+  if (incomingUrl.searchParams.get("__mio_route_probe") === ROUTE_PROBE) {
     sendJson(response, 200, {
       entry: "api-v1-catch-all",
       requestUrl: request.url,
+      incomingPathname: incomingUrl.pathname,
+      queryKeys: Object.keys(request.query ?? {}),
       routePath: request.query?.path ?? null,
+      matchedPath: request.headers["x-matched-path"] ?? null,
+      routeMatches: request.headers["x-now-route-matches"] ?? null,
       resolvedPathname
     });
     return;
