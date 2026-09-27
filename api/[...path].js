@@ -5,13 +5,35 @@ import { handleProxyRequest } from "../src/routes/proxy-routes.js";
 import { runWithStore } from "../src/storage/store.js";
 import { parseCookies, sendError } from "../src/utils/http.js";
 
-function resolveRequestPath(request) {
+function routeSegments(request) {
   const routePath = request.query?.path;
-  if (Array.isArray(routePath) && routePath.length > 0) {
-    return `/api/${routePath.map((part) => encodeURIComponent(String(part))).join("/")}`;
+  if (Array.isArray(routePath)) return routePath.map((part) => String(part)).filter(Boolean);
+  if (typeof routePath === "string") return routePath.split("/").filter(Boolean);
+  return [];
+}
+
+function resolveOpenAiPath(request, incomingPathname) {
+  if (incomingPathname.startsWith("/v1/")) return incomingPathname;
+  if (incomingPathname === "/models" || incomingPathname === "/models/") return "/models";
+  if (incomingPathname.startsWith("/api/v1/")) return incomingPathname.replace(/^\/api/, "");
+  if (incomingPathname === "/api/models" || incomingPathname === "/api/models/") return "/models";
+
+  const parts = routeSegments(request);
+  const v1Index = parts.indexOf("v1");
+  if (v1Index >= 0 && parts.length > v1Index + 1) {
+    return `/${parts.slice(v1Index).map(encodeURIComponent).join("/")}`;
   }
-  if (typeof routePath === "string" && routePath) {
-    return `/api/${routePath.split("/").filter(Boolean).map((part) => encodeURIComponent(part)).join("/")}`;
+
+  const joined = parts.join("/");
+  if (joined === "models") return "/models";
+  if (joined === "chat/completions") return "/v1/chat/completions";
+  return "";
+}
+
+function resolveRequestPath(request) {
+  const parts = routeSegments(request);
+  if (parts.length > 0) {
+    return `/api/${parts.map((part) => encodeURIComponent(part)).join("/")}`;
   }
   return new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`).pathname;
 }
@@ -19,12 +41,18 @@ function resolveRequestPath(request) {
 export default async function handler(request, response) {
   const incomingUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const url = new URL(incomingUrl.toString());
-  url.pathname = resolveRequestPath(request);
+  const openAiPath = resolveOpenAiPath(request, incomingUrl.pathname);
+  url.pathname = openAiPath || resolveRequestPath(request);
   request.cookies = parseCookies(request);
+
   response.setHeader("access-control-allow-origin", "*");
   response.setHeader("access-control-allow-headers", "content-type, authorization, x-proxy-account-id, x-conversation-id, x-kelivo-conversation-id, x-client-conversation-id");
   response.setHeader("access-control-allow-methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  if (request.method === "OPTIONS") { response.statusCode = 204; response.end(); return; }
+  if (request.method === "OPTIONS") {
+    response.statusCode = 204;
+    response.end();
+    return;
+  }
 
   try {
     await runWithStore(async () => {

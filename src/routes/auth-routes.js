@@ -28,18 +28,15 @@ async function handleLoginRequest(request, response) {
       sendError(response, 401, "Invalid username or password");
       return true;
     }
-
     sendSessionPayload(response, localSession);
   } catch (error) {
     sendError(response, 403, error.message);
   }
-
   return true;
 }
 
 async function handleRegisterRequest(request, response) {
   const body = await readJsonRequest(request);
-
   try {
     const session = registerLocalUserSession({
       inviteCode: body.inviteCode,
@@ -50,15 +47,11 @@ async function handleRegisterRequest(request, response) {
   } catch (error) {
     sendError(response, 400, error.message);
   }
-
   return true;
 }
 
 function handleLogoutRequest(response, session) {
-  if (session) {
-    deleteSession(session.id);
-  }
-
+  if (session) deleteSession(session.id);
   clearCookie(response, config.sessionCookieName);
   sendJson(response, 200, { ok: true });
   return true;
@@ -66,33 +59,19 @@ function handleLogoutRequest(response, session) {
 
 export async function handlePublicApiRequest({ request, response, session, url }) {
   if (request.method === "GET" && url.pathname === "/api/revision") {
-    sendJson(response, 200, { revision: "worker-openai-route-20260927-01" });
+    sendJson(response, 200, { revision: "worker-openai-route-20260927-02" });
     return true;
   }
-
   if (request.method === "GET" && url.pathname === "/api/me") {
     sendJson(response, 200, session ? buildSessionPayload(session) : buildAnonymousPayload());
     return true;
   }
-
   if (request.method === "GET" && url.pathname === "/api/discovery") {
-    sendJson(response, 200, {
-      paths: [...config.allowedProxyPaths].sort()
-    });
+    sendJson(response, 200, { paths: [...config.allowedProxyPaths].sort() });
     return true;
   }
-
-  if (request.method === "POST" && url.pathname === "/api/auth/login") {
-    return handleLoginRequest(request, response);
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/auth/register") {
-    return handleRegisterRequest(request, response);
-  }
-
-  if (request.method === "POST" && url.pathname === "/api/auth/logout") {
-    return handleLogoutRequest(response, session);
-  }
-
+  if (request.method === "POST" && url.pathname === "/api/auth/login") return handleLoginRequest(request, response);
+  if (request.method === "POST" && url.pathname === "/api/auth/register") return handleRegisterRequest(request, response);
+  if (request.method === "POST" && url.pathname === "/api/auth/logout") return handleLogoutRequest(response, session);
   return false;
 }
