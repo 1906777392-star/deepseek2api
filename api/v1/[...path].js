@@ -1,4 +1,4 @@
-import { handleVercelOpenAiRequest } from "../../../src/vercel/openai-handler.js";
+import { handleVercelOpenAiRequest } from "../../src/vercel/openai-handler.js";
 
 function resolvePath(request) {
   const routePath = request.query?.path;
