@@ -1,5 +1,1 @@
-import { handleVercelOpenAiRequest } from "../src/vercel/openai-handler.js";
-
-export default async function handler(request, response) {
-  await handleVercelOpenAiRequest(request, response, "/models");
-}
+export { respondServiceDisabled as default } from "../src/service-disabled.js";

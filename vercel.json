@@ -2,12 +2,10 @@
   "regions": ["hkg1"],
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 60
+      "maxDuration": 10
     }
   },
   "rewrites": [
-    { "source": "/v1/:path*", "destination": "/api/v1/:path*" },
-    { "source": "/models", "destination": "/api/models" },
-    { "source": "/proxy/:path*", "destination": "/api/proxy/:path*" }
+    { "source": "/:path*", "destination": "/api/service-disabled" }
   ]
 }
